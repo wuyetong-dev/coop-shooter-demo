@@ -22,11 +22,11 @@
    v2（本轮）：多了 weaponLv / stars 两条成长线的存储。
      因为「缺字段补默认」这条策略本身就能把 v1 升级成 v2
      （v1 里没有 weaponLv / stars → 全 0 级 / 全未达成），
-     所以 SAVE_KEY 一个字都没改：老玩家存在 localStorage 里的进度原地升版，
+     所以 SAVE_KEY 保持不变：本地 localStorage 里的进度原地升版，
      不会被新 key 清成新档。version 只作为「这份档是新结构」的标记。
    ================================================================== */
 
-const SAVE_KEY = 'warheroes.save.v1';
+const SAVE_KEY = 'coopdemo.save.v1';
 const SAVE_VER = 2;
 
 /* 战区总数。
