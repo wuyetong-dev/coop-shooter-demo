@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev pose</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  var CAM = Number((location.hash || '#0').slice(1)) || 0;
+
+  startStage(3);
+  aiPanelOpen = false;
+  input.firing = false;
+  input.mx = 900; input.my = 360;
+
+  for (var i = 0; i < 60 * 3; i++) update(1 / 60);
+
+  camera.x = CAM;
+  game.state = 'playing';
+
+  /* 清场，手工摆放几种姿态 */
+  enemies.length = 0;
+
+  player.x = CAM + 150; player.y = world.groundY; player.vy = 0;
+  player.aim = 0.05;
+  player.crouch = 1; player.h = player.baseH - 17;   /* 蹲姿 */
+  player.onGround = true;
+
+  buddy.x = CAM + 40; buddy.y = world.groundY; buddy.vy = 0;
+  buddy.aim = 0.02; buddy.crouch = 0; buddy.h = buddy.baseH;
+
+  function mk(type, x, opts) {
+    var e = createEnemy(type, x, 3);
+    e.y = world.groundY;
+    e.spawnGuard = 0;
+    e.aim = Math.PI;
+    for (var k in (opts || {})) e[k] = opts[k];
+    enemies.push(e);
+    return e;
+  }
+
+  /* 站立步兵 / 蹲下换弹 / 空降 / 掷弹兵 / 冲锋兵 */
+  mk('grunt', CAM + 430, { crouch: 0 });
+  mk('grunt', CAM + 520, { crouch: 1, h: 54 - 15, reloadT: 1.2, mag: 0 });
+  var air = mk('grunt', CAM + 610, { chute: 1, chuteVis: 1, onGround: false });
+  air.y = world.groundY - 150;
+  mk('thrower', CAM + 700, { crouch: 0 });
+  mk('rusher', CAM + 780, { crouch: 0 });
+
+  render();
+
+  /* 放大镜：把左侧几个角色裁出来放大，方便核对蹲姿细节 */
+  if (/zoom/.test(location.search)) {
+    var q = {};
+    location.search.slice(1).split('&').forEach(function (kv) {
+      var p = kv.split('='); q[p[0]] = Number(p[1]);
+    });
+    var ZX = q.zx || 50, ZY = q.zy || 500, ZW = q.zw || 380, ZH = q.zh || 195, ZS = q.zs || 3;
+    var img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    var tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+</script>
+</body>
+</html>

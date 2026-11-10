@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>pixel probe</title>
+<style>
+  * { margin:0; padding:0; }
+  body { background:#0b0f14; color:#cfe; font:12px Consolas,monospace; }
+  canvas { display:none; }
+  pre { padding:10px; white-space:pre; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="720"></canvas>
+<pre id="out">loading</pre>
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  var q = {};
+  location.search.slice(1).split('&').forEach(function (kv) {
+    var p = kv.split('=');
+    q[p[0]] = (p[1] === undefined) ? 1 : p[1];
+  });
+  var OUT = [];
+  function log(s) { OUT.push(s); }
+
+  try {
+    var ST = Number(q.stage) || 1;
+    aiPanelOpen = false;
+
+    if (q.scene === 'fight') {
+      startStage(ST);
+      game.waveActive = true;
+      game.spawnQueue = [];
+      enemies.length = 0;
+      var px0 = world.w * 0.44;
+      player.x = px0; player.y = world.groundY; player.vy = 0;
+      buddy.x = px0 - 90; buddy.y = world.groundY;
+      spawnEnemyAt(bossForStage(ST), { x: px0 + 430, y: world.groundY }, ST);
+      var bs = enemies[enemies.length - 1];
+      bs.spawnGuard = 0; bs.chute = 0;
+      for (var j = 0; j < 90; j++) update(1 / 60);
+      bs = enemies.find(function (e) { return e.boss; }) || bs;
+      bs.hp = bs.maxHp * 0.62;
+      for (var k = 0; k < 24; k++) update(1 / 60);
+      camera.x = player.x - 120;
+      game.screenFlash = 0; game.bossIntro = null;
+      if (q.fire) {
+        spawnFire(player.x + 40, world.groundY, 116, 5.4, 7);
+        spawnFire(player.x + 190, world.groundY, 116, 5.4, 7);
+        for (var m = 0; m < 26; m++) updateFires(1 / 60);
+        for (var n = 0; n < 20; n++) update(1 / 60);
+        game.screenFlash = 0; game.bossIntro = null;
+      }
+      render();
+      log('scene=fight stage=' + ST + ' fire=' + (q.fire ? 1 : 0) + ' fires=' + fires.length +
+        ' camera.x=' + Math.round(camera.x) + ' groundY=' + world.groundY);
+    } else {
+      startStage(ST);
+      game.wave = game.maxWave - 1;
+      beginWave();
+      for (var i = 0; i < 42; i++) update(1 / 60);
+      player.x = world.w * 0.42; player.y = world.groundY;
+      camera.x = player.x - 120;
+      render();
+    }
+
+    log('bossIntro = ' + (game.bossIntro ? (game.bossIntro.name + ' t=' + game.bossIntro.t.toFixed(2)) : 'null'));
+
+    /* 沿 x=200 的竖线扫一遍，看哪些 y 上有明显的暖色高光带 */
+    var px = ctx.getImageData(200, 0, 1, 720).data;
+    var rows = [];
+    for (var y = 0; y < 720; y++) {
+      var r = px[y * 4], g = px[y * 4 + 1], b = px[y * 4 + 2];
+      rows.push([y, r, g, b]);
+    }
+    /* 和「上下相邻 20 行的均值」比较，突变的地方就是画上去的东西 */
+    function lum(c) { return 0.299 * c[1] + 0.587 * c[2] + 0.114 * c[3]; }
+    var marks = [];
+    for (var y2 = 22; y2 < 700; y2++) {
+      var a = lum(rows[y2 - 20]), c2 = lum(rows[y2]);
+      if (Math.abs(c2 - a) > 12) marks.push(y2 + ':' + (c2 > a ? '+' : '-') + Math.round(Math.abs(c2 - a)));
+    }
+    /* 合并相邻，只报告区段 */
+    var segs = [], cur = null;
+    for (var k = 0; k < marks.length; k++) {
+      var yy = parseInt(marks[k], 10);
+      if (cur && yy - cur.end <= 3) cur.end = yy; else { cur = { start: yy, end: yy }; segs.push(cur); }
+    }
+    log('x=200 亮度突变区段：' + segs.map(function (s) {
+      return s.start + '~' + s.end;
+    }).join('  '));
+
+    /* 横向扫一条线，找「孤立亮块」的左右边界 */
+    function scanRow(y) {
+      var d = ctx.getImageData(0, y, 1280, 1).data;
+      var out = [], run = null;
+      for (var x = 0; x < 1280; x++) {
+        var r = d[x * 4], g = d[x * 4 + 1], b = d[x * 4 + 2];
+        var bright = (0.299 * r + 0.587 * g + 0.114 * b) > 120;
+        if (bright && !run) run = { a: x, b: x, c: r + ',' + g + ',' + b };
+        else if (bright) { run.b = x; run.c = r + ',' + g + ',' + b; }
+        else if (run) { out.push(run); run = null; }
+      }
+      if (run) out.push(run);
+      log('  row y=' + y + '：' + (out.length
+        ? out.map(function (s) { return s.a + '~' + s.b + '(' + s.c + ')'; }).join(' ')
+        : '无亮块'));
+    }
+    log('');
+    log('横向亮块扫描：');
+    if (q.scene === 'fight') {
+      [430, 480, 530, 560, 585, 600, 620].forEach(scanRow);
+    } else {
+      [178, 186, 262, 282].forEach(scanRow);
+    }
+
+    log('');
+    log('逐行采样（y : rgb）—— 只在 y=130..320 之间每 4 行一条');
+    for (var y3 = 130; y3 <= 320; y3 += 4) {
+      var rr = rows[y3];
+      log('  y=' + y3 + '  rgb(' + rr[1] + ',' + rr[2] + ',' + rr[3] + ')');
+    }
+
+    /* 把横幅相关几何也打印出来，和实际渲染对账 */
+    log('');
+    log('横幅几何：cy=224 → 光带1 178~192，名字基线 234，称号基线 266，光带2 278~292');
+  } catch (e) {
+    log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+  }
+  document.getElementById('out').textContent = OUT.join('\n');
+  document.title = 'done';
+</script>
+</body>
+</html>

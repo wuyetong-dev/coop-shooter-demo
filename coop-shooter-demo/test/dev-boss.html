@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev boss</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  /* 冻结主循环，手工逐帧推进，方便在「某一秒」截图 */
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  var q = {};
+  location.search.slice(1).split('&').forEach(function (kv) {
+    var p = kv.split('=');
+    q[p[0]] = (p[1] === undefined) ? 1 : p[1];
+  });
+  var ST = Number(q.stage) || 1;
+  var SCENE = q.scene || 'intro';     /* intro | fight | kill */
+  var BT = bossForStage(ST);
+
+  aiPanelOpen = false;
+
+  var DT = 1 / 60;
+
+  /* 把队友钉在指定位置（离玩家 dx 像素），并清掉残余速度，
+     让截图里的姿态是「站定」而不是「下落中」 */
+  function pinBuddy(dx) {
+    buddy.x = player.x + Number(dx);
+    buddy.y = world.groundY;
+    buddy.vx = 0; buddy.vy = 0; buddy.onGround = true;
+    buddy.dead = false; buddy.downed = false;
+    buddy.hp = buddy.maxHp;
+    buddy.aim = 0; buddy.facing = 1;
+    buddy.flash = 0; buddy.muzzle = 0;
+  }
+
+  if (SCENE === 'intro') {
+    /* ---- 入场横幅：把 BOSS 波点起来，推到横幅正中的那一帧 ---- */
+    startStage(ST);
+    game.wave = game.maxWave - 1;
+    beginWave();
+    for (var i = 0; i < 42; i++) update(DT);   /* ≈0.7s：横幅完全展开 */
+    /* 玩家面朝 BOSS */
+    player.x = world.w * 0.42;
+    player.y = world.groundY;
+    camera.x = player.x - 120;
+
+  } else if (SCENE === 'fight') {
+    /* ---- 交战：BOSS 满场，血条掉到 62%，玩家在掩体后 ---- */
+    startStage(ST);
+    game.waveActive = true;
+    game.spawnQueue = [];
+    enemies.length = 0;
+    var px = world.w * 0.44;
+    player.x = px; player.y = world.groundY; player.vy = 0;
+    buddy.x = px - 90; buddy.y = world.groundY;
+    spawnEnemyAt(BT, { x: px + 430, y: world.groundY }, ST);
+    var bs = enemies[enemies.length - 1];
+    bs.spawnGuard = 0; bs.chute = 0;
+    for (var j = 0; j < 90; j++) update(DT);
+    bs = enemies.find(function (e) { return e.boss; }) || bs;
+    bs.hp = bs.maxHp * 0.62;                  /* 制造一段可读的残影 */
+    for (var k = 0; k < 24; k++) update(DT);
+    /* camoff 让玩家在画面里左移/右移，避开左右两块 HUD 面板，方便拍同框图 */
+    camera.x = player.x - Number(q.camoff || 120);
+    game.screenFlash = 0;
+    game.bossIntro = null;
+    /* 队友定位必须在所有 update() 之后：放在中间循环之前的话，
+       随后 24 帧里它会跟着战斗一起被弹飞（实测 y 从地面 570 窜到 4，直接飞出画面顶部）。 */
+    pinBuddy(q.buddy || 130);
+
+    if (q.fire) {
+      /* 顺便验证燃烧地带：玩家脚下铺两摊火 */
+      spawnFire(player.x + 40, world.groundY, 116, 5.4, 7);
+      spawnFire(player.x + 190, world.groundY, 116, 5.4, 7);
+      for (var m = 0; m < 26; m++) updateFires(DT);
+      spawnGrenade(bs.x - 40, bs.y - bs.h * 0.85, -260, -420, 12, 'enemy', { fire: true, fuse: 9 });
+      for (var n = 0; n < 20; n++) update(DT);
+      game.screenFlash = 0;
+      game.bossIntro = null;
+    }
+
+  } else if (SCENE === 'kill') {
+    /* ---- 击破：慢动作 + 白闪 + 连环爆 ---- */
+    startStage(ST);
+    game.waveActive = true;
+    game.spawnQueue = [];
+    enemies.length = 0;
+    var kx = world.w * 0.46;
+    player.x = kx; player.y = world.groundY;
+    buddy.x = kx - 90; buddy.y = world.groundY;
+    spawnEnemyAt(BT, { x: kx + 330, y: world.groundY }, ST);
+    var kb = enemies[enemies.length - 1];
+    kb.spawnGuard = 0; kb.chute = 0;
+    for (var a = 0; a < 30; a++) update(DT);
+    kb.hp = 1;
+    killEnemy(kb);
+    for (var b2 = 0; b2 < Number(q.t || 14); b2++) update(DT);
+    camera.x = player.x - 120;
+  }
+
+  game.state = 'playing';
+  render();
+  if (q.dbg) {
+    /* 走 DOM 而不是 canvas 文本：canvas 上会被血条/HUD 压住，DOM 永远在最上层，
+       而且可以用 --dump-dom 直接读到数字，不依赖截图 */
+    var d = document.createElement('div');
+    d.id = 'dbgout';
+    d.style.cssText = 'position:absolute;left:10px;top:92px;z-index:99;' +
+      'font:bold 13px/1.5 monospace;color:#0f0;background:rgba(0,0,0,.75);' +
+      'padding:6px 10px;border:1px solid #0a0;border-radius:4px;white-space:pre;';
+    d.textContent =
+      'buddy  x=' + Math.round(buddy.x) + ' y=' + Math.round(buddy.y) +
+      ' sx=' + Math.round(buddy.x - camera.x) + '\n' +
+      '       dead=' + buddy.dead + ' down=' + buddy.downed +
+      ' look=' + buddy.look + ' onGround=' + buddy.onGround + '\n' +
+      'player x=' + Math.round(player.x) + ' cam=' + Math.round(camera.x) +
+      '  enemies=' + enemies.length;
+    document.body.appendChild(d);
+  }
+
+  /* 局部放大：crop=x,y,w,h&scale=3 —— 用来检查小物件的细节 */
+  if (q.crop) {
+    var c = String(q.crop).split(',').map(Number);
+    var ZS = Number(q.scale) || 3;
+    var img = ctx.getImageData(c[0], c[1], c[2], c[3]);
+    var tmp = document.createElement('canvas');
+    tmp.width = c[2]; tmp.height = c[3];
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, c[2], c[3], 0, 0, c[2] * ZS, c[3] * ZS);
+  }
+</script>
+</body>
+</html>

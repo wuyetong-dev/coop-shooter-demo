@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev prone</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/meta.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  /* 干净的趴姿对照台：不画关卡、不画 HUD，只留四个人 + 地面辅助线 + 受击盒 */
+  startStage(3);
+  aiPanelOpen = false;
+  input.firing = false;
+
+  camera.x = 0; camera.y = 0; camera.shake = 0;
+  enemies.length = 0; bullets.length = 0; particles.length = 0;
+
+  const GY = world.groundY;          /* 600 */
+  const XS = [235, 480, 725, 970];  /* 世界横坐标 → 屏幕上 305 / 634 / 964 / 1293 */
+
+  /* ---------- 1. 玩家（hero）---------- */
+  player.x = XS[0]; player.y = GY; player.vy = 0; player.onGround = true;
+  player.aim = -0.04; player.vx = 0;
+  player.crouch = 0; player.prone = 1;
+  player.h = stanceH(player, 17); player.hitW = stanceHitW(player);
+  player.muzzle = 0;
+
+  /* ---------- 2. 大肥鱼（whale）---------- */
+  buddy.x = XS[1]; buddy.y = GY; buddy.vy = 0; buddy.onGround = true;
+  buddy.aim = 0.04; buddy.vx = 0;
+  buddy.crouch = 0; buddy.prone = 1;
+  buddy.h = stanceH(buddy, 17); buddy.hitW = stanceHitW(buddy);
+  buddy.muzzle = 0;
+
+  /* ---------- 3. 重机枪兵（只有它能架枪趴下）---------- */
+  const g = createEnemy('gunner', XS[2], 3);
+  g.y = GY; g.spawnGuard = 0; g.aim = Math.PI + 0.02;
+  g.crouch = 0; g.prone = 1;
+  g.h = stanceH(g, 15); g.hitW = stanceHitW(g);
+  g.muzzle = 0;
+
+  /* ---------- 4. AI 干员（奇米）---------- */
+  const fake = {
+    x: XS[3], sx: XS[3], y: GY, h: 58, baseH: 58,
+    look: 'kimi', aim: Math.PI - 0.03,
+    crouch: 0, prone: 1, landSquash: 0, muzzle: 0.12,
+    invuln: 0, dead: false, downed: false, weapon: 0,
+    mags: [9, 9, 9, 9, 9], reloading: 0, reloadT: 0,
+    vx: 0, vy: 0, onGround: true, hp: 100, maxHp: 100, behavior: 'ai'
+  };
+  fake.h = stanceH(fake, 17); fake.hitW = stanceHitW(fake);
+
+  /* ---------- 画 ---------- */
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#101820'; ctx.fillRect(0, 0, 1280, 720);
+  ctx.fillStyle = '#141c24'; ctx.fillRect(0, 0, 1280, 720);
+
+  const toS = (wx) => (wx - camera.x) * VIEW_ZOOM;
+  const toSY = (wy) => wy * VIEW_ZOOM + CAM_TY;
+  const gsy = toSY(GY);
+
+  /* 地面 + 三条参考线：站立身高 / 趴下身高 / 头顶 */
+  ctx.fillStyle = '#0c1218'; ctx.fillRect(0, gsy, 1280, 720 - gsy);
+  ctx.strokeStyle = 'rgba(255,209,102,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, gsy + 0.5); ctx.lineTo(1280, gsy + 0.5); ctx.stroke();
+
+  ctx.save();
+  ctx.translate(0, CAM_TY); ctx.scale(VIEW_ZOOM, VIEW_ZOOM);
+
+  drawEnemy(g);
+  drawSoldier(buddy, true);
+  drawSoldier(player, false);
+  drawAgent(fake, false);
+
+  /* 受击盒（青）与站立身高参考（灰）——趴下之后盒顶应该正好压到视觉头顶 */
+  const marks = [
+    { a: player, c: '#4ad9ff' },
+    { a: buddy,  c: '#4ad9ff' },
+    { a: g,      c: '#ff8a5c' },
+    { a: fake,   c: '#9dff8a' }
+  ];
+  ctx.lineWidth = 1.4 / VIEW_ZOOM;
+  for (const m of marks) {
+    const a = m.a, w = (a.hitW || a.w), h = a.h;
+    ctx.strokeStyle = m.c;
+    ctx.strokeRect(a.x - w / 2, a.y - h, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(a.x - 26, a.y - 58); ctx.lineTo(a.x + 26, a.y - 58);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  /* 屏上标注 */
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 13px "Microsoft YaHei",sans-serif';
+  const caps = ['玩家 hero · prone=1', '大肥鱼 whale · prone=1', '重机枪兵 gunner · prone=1', '干员 kimi · prone=1'];
+  for (let i = 0; i < 4; i++) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText(caps[i], toS(XS[i]), gsy + 42);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = '12px "Microsoft YaHei",sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('青框 = 受击盒（hitW 66 × h 24）　灰线 = 站立身高 58　黄线 = 地面', 24, 34);
+
+  /* 放大镜 */
+  if (/zoom/.test(location.search)) {
+    const q = {};
+    location.search.slice(1).split('&').forEach(function (kv) {
+      const p = kv.split('='); q[p[0]] = Number(p[1]);
+    });
+    const ZX = q.zx || 250, ZY = q.zy || 520, ZW = q.zw || 330, ZH = q.zh || 160, ZS = q.zs || 3;
+    const img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    const tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+</script>
+</body>
+</html>

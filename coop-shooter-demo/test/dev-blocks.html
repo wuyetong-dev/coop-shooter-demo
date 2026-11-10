@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev blocks</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  /* 冻结主循环：本页只画一帧静态画面，方便截图核对障碍物 */
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  var CAM = Number((location.hash || '#0').slice(1)) || 0;
+
+  startStage(3);
+  aiPanelOpen = false;
+  input.firing = false;
+  input.mx = 900; input.my = 360;
+
+  /* 先跑一小段，让敌人生成、八哥动起来 */
+  for (var i = 0; i < 60 * 5; i++) {
+    update(1 / 60);
+    if (game.state !== 'playing') break;
+  }
+
+  /* 把玩家和镜头挪到要看的位置 */
+  player.x = CAM + 620;
+  player.y = world.groundY;
+  player.vy = 0;
+  buddy.x = CAM + 540;
+  buddy.y = world.groundY;
+  camera.x = CAM;
+  game.state = 'paused';
+
+  render();
+</script>
+</body>
+</html>

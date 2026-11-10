@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;background:#111;overflow:hidden}
+  canvas{display:block;image-rendering:pixelated}
+</style>
+<canvas id="c"></canvas>
+<script>
+/* 通用裁切放大器：?img=xxx.png&x=0&y=0&w=420&h=140&scale=3 */
+const q = new URLSearchParams(location.search);
+const img = new Image();
+img.onload = () => {
+  const x = +(q.get('x') || 0), y = +(q.get('y') || 0);
+  const w = +(q.get('w') || 400), h = +(q.get('h') || 200);
+  const s = +(q.get('scale') || 3);
+  const c = document.getElementById('c');
+  c.width = w * s; c.height = h * s;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.drawImage(img, x, y, w, h, 0, 0, w * s, h * s);
+  /* 网格：每 40 源像素一条细线，方便读坐标 */
+  g.strokeStyle = 'rgba(0,255,180,0.30)'; g.lineWidth = 1;
+  for (let gx = 0; gx <= w; gx += 40) { g.beginPath(); g.moveTo(gx * s + .5, 0); g.lineTo(gx * s + .5, h * s); g.stroke(); }
+  for (let gy = 0; gy <= h; gy += 40) { g.beginPath(); g.moveTo(0, gy * s + .5); g.lineTo(w * s, gy * s + .5); g.stroke(); }
+  g.fillStyle = '#00ffb4'; g.font = '11px monospace';
+  for (let gx = 0; gx <= w; gx += 80) g.fillText('x' + (x + gx), gx * s + 3, 12);
+  for (let gy = 80; gy <= h; gy += 80) g.fillText('y' + (y + gy), 3, gy * s - 3);
+  document.title = 'ready';
+};
+img.src = q.get('img');
+</script>

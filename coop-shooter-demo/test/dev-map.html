@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev map - 地形要素</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script>
+  /* 固定机位验收地形：?s=关卡(1..3)&v=pit|wind|spike|flame
+     一次性把相机怼到目标物上，然后冻住 update —— 只留 render，
+     免得截图时敌人跑过来、火焰周期又转回静默期。 */
+  const q = new URLSearchParams(location.search);
+  const STAGE = Number(q.get('s') || 1);
+  const VIEW = q.get('v') || 'pit';
+
+  startStage(STAGE);
+  aiPanelOpen = false;
+  game.wave = 2;
+  game.waveActive = false;
+  game.spawnQueue = [];
+  enemies.length = 0;
+  game.state = 'playing';
+
+  let target = null;
+  if (VIEW === 'pit')        target = world.pits[0];
+  else if (VIEW === 'wind')  target = world.winds[0];
+  else                       target = world.hazards.find(h => h.kind === VIEW) || world.hazards[0];
+
+  if (target) {
+    const cx = target.x + target.w * 0.5;
+    /* 视角两侧都留出东西：坑口要看到两边的警戒带，风口要看到头顶的高台 */
+    camera.x = Math.max(0, cx - VIEW_W * 0.5);
+    /* 玩家站在目标左侧 150px 的实地上（掉坑的截图就靠他站边） */
+    let px = cx - 150;
+    for (let d = 0; d < 420 && !groundAt(px); d += 6) px -= 6;
+    player.x = px; player.y = world.groundY; player.onGround = true; player.vx = 0;
+    player.vy = 0; player.plat = null; player.hp = player.maxHp; player.downed = false;
+    player.facing = 1; player.aim = 0;
+
+    buddy.x = px - 90; buddy.y = world.groundY; buddy.onGround = true;
+    buddy.vx = 0; buddy.vy = 0; buddy.plat = null;
+    buddy.cmd = 'hold'; buddy.holdX = buddy.x;
+  }
+  input.mx = 900; input.my = 300;
+
+  /* 火焰截图：手动推到「正在喷」的中段，并且让火星/余烬也处在高温状态 */
+  for (const hz of world.hazards) {
+    if (hz.kind === 'flame') { hz.t = hz.period - 0.30; hz.firing = 1; }
+  }
+
+  for (let i = 0; i < 4; i++) update(1 / 60);
+  if (VIEW === 'pit') {
+    /* 让人物滑到坑边但还没掉下去 —— 检验警戒带与坑口的相对位置 */
+    player.x = target.x - player.w * 0.5 - 6;
+    player.y = world.groundY; player.onGround = true; player.vy = 0;
+    buddy.x = player.x - 74; buddy.y = world.groundY; buddy.onGround = true;
+  }
+  if (VIEW === 'wind') {
+    /* 站在风口里往上跳，看气流柱和空中的托举感 */
+    player.x = target.x + target.w * 0.5;
+    doJump(player);
+    for (let i = 0; i < 26; i++) update(1 / 60);
+    camera.x = Math.max(0, target.x + target.w * 0.5 - VIEW_W * 0.5);
+  }
+  if (VIEW === 'flame') {
+    for (const hz of world.hazards) if (hz.kind === 'flame') hz.firing = 1;
+  }
+  player.vx = 0; buddy.vx = 0;
+
+  /* update() 每帧都会把镜头拉回玩家身上，所以机位必须在最后一次 update 之后定 */
+  if (target) camera.x = Math.max(0, target.x + target.w * 0.5 - VIEW_W * 0.5);
+  camera.shake = 0;
+  /* 清掉开局大字与喊话，否则正好糊在坑口上 */
+  game.msg = '';
+  game.msgTimer = 0;
+  buddy.bubbleTimer = 0; buddy.bubble = "";
+  for (const t of texts) t.life = 0;
+
+  /* 冻住逻辑，只留渲染（截图期间场景不许再变） */
+  update = () => {};
+</script>
+<script src="../js/hud.js"></script>
+</body>
+</html>

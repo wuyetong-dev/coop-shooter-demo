@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev xiaoke</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/meta.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  /* 小克：站姿 / 蹲姿 / 趴姿 三格对照，专门验证瓷甲 painter 的放平变换 */
+  startStage(3);
+  aiPanelOpen = false; input.firing = false;
+  camera.x = 0; camera.y = 0; camera.shake = 0;
+  enemies.length = 0; bullets.length = 0; particles.length = 0;
+
+  const GY = world.groundY;
+  const XS = [120, 380, 640];
+  const poses = [
+    { prone: 0, crouch: 0, cap: '站立 · prone=0' },
+    { prone: 0, crouch: 1, cap: '蹲下 · crouch=1' },
+    { prone: 1, crouch: 0, cap: '趴下 · prone=1' }
+  ];
+
+  const list = poses.map((ps, i) => {
+    const e = createEnemy('boss3', XS[i], 3);
+    e.y = GY; e.vy = 0; e.onGround = true; e.spawnGuard = 0; e.vx = 0;
+    e.aim = 0;                               /* 朝右：不带镜像，先看纯旋转 */
+    e.prone = ps.prone; e.crouch = ps.crouch;
+    e.h = stanceH(e, 15); e.hitW = stanceHitW(e);
+    e.muzzle = 0; e.flash = 0; e.cap = ps.cap;
+    return e;
+  });
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#101820'; ctx.fillRect(0, 0, 1280, 720);
+
+  const toS = (wx) => (wx - camera.x) * VIEW_ZOOM;
+  const toSY = (wy) => wy * VIEW_ZOOM + CAM_TY;
+  const gsy = toSY(GY);
+  ctx.fillStyle = '#0c1218'; ctx.fillRect(0, gsy, 1280, 720 - gsy);
+  ctx.strokeStyle = 'rgba(255,209,102,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, gsy + 0.5); ctx.lineTo(1280, gsy + 0.5); ctx.stroke();
+
+  ctx.save();
+  ctx.translate(0, CAM_TY); ctx.scale(VIEW_ZOOM, VIEW_ZOOM);
+  for (const e of list) drawEnemy(e);
+  ctx.lineWidth = 1.2 / VIEW_ZOOM;
+  for (const e of list) {
+    ctx.strokeStyle = 'rgba(255,138,92,0.85)';
+    ctx.strokeRect(e.x - e.hitW / 2, e.y - e.h, e.hitW, e.h);
+  }
+  ctx.restore();
+
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
+  for (const e of list) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText(e.cap, toS(e.x), gsy + 40);
+  }
+
+  if (/zoom/.test(location.search)) {
+    const q = {};
+    location.search.slice(1).split('&').forEach(function (kv) {
+      const p = kv.split('='); q[p[0]] = Number(p[1]);
+    });
+    const ZX = q.zx || 250, ZY = q.zy || 480, ZW = q.zw || 400, ZH = q.zh || 200, ZS = q.zs || 3;
+    const img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    const tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+</script>
+</body>
+</html>

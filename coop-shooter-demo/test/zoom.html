@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>zoom</title>
+<style>
+  html, body { margin:0; padding:0; background:#000; overflow:hidden; }
+  #box { position:absolute; left:0; top:0; width:100vw; height:100vh; overflow:hidden; }
+  #box img { position:absolute; image-rendering:pixelated; }
+</style>
+</head>
+<body>
+<div id="box"><img id="im" alt=""></div>
+<script>
+  /* 局部放大验收：?img=xxx.png&x=像素&y=像素&z=倍数
+     x/y 是原图上「要放到画面正中」的那个点 —— 直接截图就能看清细节。 */
+  const q = new URLSearchParams(location.search);
+  const im = document.getElementById('im');
+  const z = Number(q.get('z') || 3);
+  const px = Number(q.get('x') || 640);
+  const py = Number(q.get('y') || 360);
+  im.onload = () => {
+    im.style.width = (im.naturalWidth * z) + 'px';
+    im.style.height = (im.naturalHeight * z) + 'px';
+    im.style.left = (innerWidth / 2 - px * z) + 'px';
+    im.style.top = (innerHeight / 2 - py * z) + 'px';
+    document.title = 'zoom ' + im.naturalWidth + 'x' + im.naturalHeight + ' z' + z;
+  };
+  im.src = q.get('img') || '';
+</script>
+</body>
+</html>

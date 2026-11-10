@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev prone all</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/meta.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  /* 全兵种趴姿对照台：六格并排，最后一格是小克（瓷甲 painter）朝左，
+     专门看「镜像 + 放平」这一路有没有把枪和身体一起拧反。 */
+  startStage(3);
+  aiPanelOpen = false;
+  input.firing = false;
+  camera.x = 0; camera.y = 0; camera.shake = 0;
+  enemies.length = 0; bullets.length = 0; particles.length = 0;
+
+  const GY = world.groundY;
+  /* 世界横坐标；乘 VIEW_ZOOM(1.22) 才是屏幕像素 */
+  const XS = [95, 265, 435, 605, 775, 945];
+
+  const defs = [
+    { type: 'grunt',   aim: 0,            cap: '步兵 grunt' },
+    { type: 'rusher',  aim: Math.PI,      cap: '冲锋兵 rusher' },
+    { type: 'thrower', aim: 0,            cap: '掷弹兵 thrower' },
+    { type: 'boss',    aim: Math.PI,      cap: '铁血队长 boss' },
+    { type: 'boss3',   aim: 0,            cap: '小克 boss3（朝右）' },
+    { type: 'boss3',   aim: Math.PI,      cap: '小克 boss3（朝左）' }
+  ];
+
+  const list = defs.map((d, i) => {
+    const e = createEnemy(d.type, XS[i], 3);
+    e.y = GY; e.vy = 0; e.onGround = true;
+    e.spawnGuard = 0; e.vx = 0;
+    e.aim = d.aim;
+    e.crouch = 0; e.prone = 1;
+    e.h = stanceH(e, 15); e.hitW = stanceHitW(e);
+    e.muzzle = 0; e.flash = 0;
+    e.cap = d.cap;
+    return e;
+  });
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#101820'; ctx.fillRect(0, 0, 1280, 720);
+
+  const toS = (wx) => (wx - camera.x) * VIEW_ZOOM;
+  const toSY = (wy) => wy * VIEW_ZOOM + CAM_TY;
+  const gsy = toSY(GY);
+
+  ctx.fillStyle = '#0c1218'; ctx.fillRect(0, gsy, 1280, 720 - gsy);
+  ctx.strokeStyle = 'rgba(255,209,102,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, gsy + 0.5); ctx.lineTo(1280, gsy + 0.5); ctx.stroke();
+
+  /* 站立身高参考线（灰）—— 趴下去之后头顶应该明显落在这条线下面 */
+  ctx.save();
+  ctx.translate(0, CAM_TY); ctx.scale(VIEW_ZOOM, VIEW_ZOOM);
+  for (const e of list) drawEnemy(e);
+  ctx.lineWidth = 1.2 / VIEW_ZOOM;
+  for (const e of list) {
+    const w = (e.hitW || e.w), h = e.h;
+    ctx.strokeStyle = 'rgba(255,138,92,0.85)';
+    ctx.strokeRect(e.x - w / 2, e.y - h, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.beginPath();
+    ctx.moveTo(e.x - 34, e.y - (e.baseH || 56)); ctx.lineTo(e.x + 34, e.y - (e.baseH || 56));
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
+  for (const e of list) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText(e.cap, toS(e.x), gsy + 40);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = '12px "Microsoft YaHei",sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('橙框 = 受击盒（hitW × h）　灰线 = 该兵种站立身高　黄线 = 地面', 24, 34);
+
+  if (/zoom/.test(location.search)) {
+    const q = {};
+    location.search.slice(1).split('&').forEach(function (kv) {
+      const p = kv.split('='); q[p[0]] = Number(p[1]);
+    });
+    const ZX = q.zx || 250, ZY = q.zy || 500, ZW = q.zw || 330, ZH = q.zh || 170, ZS = q.zs || 3;
+    const img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    const tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+</script>
+</body>
+</html>

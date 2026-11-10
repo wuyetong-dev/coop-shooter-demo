@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>pixel map</title>
+<style>
+  html, body { margin:0; background:#05070a; color:#9fe0b0; }
+  #log { font:11px/1.15 Consolas,monospace; white-space:pre; padding:8px; }
+  #log b { color:#ffd479; }
+</style>
+</head>
+<body>
+<div id="log">loading...</div>
+<script>
+/* 把一张截图按亮度画成字符图 —— 「坑里有没有立着一根浅色柱子」这种判断，
+   靠肉眼看缩放图容易把渐变当成柱子，直接读像素最省事。
+   用法：px.html?img=sf_pit_s1.png&x=460&y=596&w=136&h=72&s=4
+   每个字符代表 s×s 像素块里的最亮值： 空格最暗 → # 最亮 */
+const q = new URLSearchParams(location.search);
+const img = q.get('img') || 'sf_pit_s1.png';
+const X = Number(q.get('x') || 0);
+const Y = Number(q.get('y') || 596);
+const W = Number(q.get('w') || 136);
+const H = Number(q.get('h') || 72);
+const S = Number(q.get('s') || 4);
+const RAMP = ' .:-=+*#%@';
+
+const el = document.getElementById('log');
+const im = new Image();
+im.onload = () => {
+  try {
+  const cv = document.createElement('canvas');
+  cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+  const c = cv.getContext('2d');
+  c.drawImage(im, 0, 0);
+  let out = 'img ' + im.naturalWidth + 'x' + im.naturalHeight
+    + '  region x' + X + ' y' + Y + ' w' + W + ' h' + H + '  cell ' + S + '\n\n';
+
+  /* 列号尺 */
+  let ruler = '     ';
+  for (let x = 0; x < W; x += S) ruler += (x % 40 === 0 ? '|' : ' ');
+  out += ruler + '\n';
+
+  for (let y = 0; y < H; y += S) {
+    const d = c.getImageData(X, Y + y, W, Math.min(S, H - y)).data;
+    const w = Math.min(W, W);
+    let line = '';
+    for (let x = 0; x < w; x += S) {
+      let mx = 0;
+      for (let k = 0; k < S; k++) {
+        const px = x + k;
+        if (px >= w) break;
+        const i = (px) * 4;
+        const b = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        if (b > mx) mx = b;
+      }
+      line += RAMP[Math.min(RAMP.length - 1, Math.round(mx / 255 * (RAMP.length - 1) * 2.6))];
+    }
+    out += String(Y + y).padStart(4, ' ') + ' ' + line + '\n';
+  }
+  el.textContent = out;
+  } catch (e) {
+    el.textContent = '!! ' + e.message + '\n(多半是 file:// 下 canvas 被标记为污染，读不了像素)';
+  }
+};
+im.onerror = () => { el.textContent = '读不到图片 ' + img; };
+im.src = img;
+</script>
+</body>
+</html>

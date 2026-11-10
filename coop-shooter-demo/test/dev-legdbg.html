@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>leg dbg</title>
+<style>body{background:#111;color:#ddd;font:13px monospace;margin:0}</style>
+</head>
+<body>
+<canvas id="game" width="400" height="300" style="display:none"></canvas>
+<pre id="out">loading</pre>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+const L = [];
+function log(){ L.push([].slice.call(arguments).join(' ')); document.getElementById('out').textContent = L.join('\n'); }
+window.addEventListener('error', e => log('ERR', e.message, '@', e.filename + ':' + e.lineno));
+
+function waitImg(){
+  return new Promise(res => {
+    if (whaleHoldReady()) return res(true);
+    WHALE_SPRITE_HOLD.onload = () => res(true);
+    WHALE_SPRITE_HOLD.onerror = () => res(false);
+    setTimeout(() => res(whaleHoldReady()), 1500);
+  });
+}
+
+waitImg().then(ok => {
+  log('holdReady', ok, 'nat', WHALE_SPRITE_HOLD.naturalWidth + 'x' + WHALE_SPRITE_HOLD.naturalHeight);
+  const parts = whaleLegParts(WHALE_SPRITE_HOLD);
+  log('parts', parts ? 'OK' : 'NULL');
+  if (!parts) return;
+  log('body', parts.body.width + 'x' + parts.body.height, 's=' + parts.s);
+  for (const k in parts.legs) log('leg', k, parts.legs[k].width + 'x' + parts.legs[k].height);
+
+  /* 腿片是否真的有像素 */
+  for (const k in parts.legs) {
+    const c = parts.legs[k], g = c.getContext('2d');
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++;
+    log('  opaque px in', k, n);
+  }
+  /* 躯干在腿那块区域是否真的挖空了 */
+  const bg = parts.body.getContext('2d');
+  for (const k in WHALE_LEG) {
+    const R = WHALE_LEG[k];
+    const d = bg.getImageData(R.cutX0, R.cutY, R.cutX1 - R.cutX0, 192 - R.cutY).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++;
+    log('  body residual px below cut', k, n);
+  }
+
+  /* 实际画一遍，统计脚底那条带子里的像素 */
+  const cvs = document.getElementById('game'), ctx2 = cvs.getContext('2d');
+  const a = { x: 200, y: 250, h: 58, aim: 0, vx: 0, vy: 0, anim: 0, onGround: true,
+              crouch: 0, landSquash: 0, invuln: 0, dashTime: 0, flash: 0, muzzle: 0,
+              downed: false, dead: false, airJumpT: 0 };
+  camera.x = 0; camera.y = 0;
+  drawWhaleGirl(a, false);
+  const cx = 200;
+  const full = ctx2.getImageData(cx - 40, 140, 80, 116).data;
+  let rows = [];
+  for (let yy = 0; yy < 116; yy++) {
+    let n = 0;
+    for (let xx = 0; xx < 80; xx++) if (full[(yy * 80 + xx) * 4 + 3] > 40) n++;
+    rows.push(n);
+  }
+  for (let yy = 100; yy < 116; yy++) log('row y=' + (140 + yy) + ' painted ' + rows[yy]);
+
+  /* 隔离测试：把两块腿片直接画到空白处，确认 drawImage 参数没错 */
+  ctx2.clearRect(0, 0, 400, 300);
+  ctx2.drawImage(parts.legs.front, 20, 20, parts.legs.front.width, parts.legs.front.height);
+  const t1 = ctx2.getImageData(20, 20, 21, 40).data;
+  let c1 = 0;
+  for (let i = 3; i < t1.length; i += 4) if (t1[i] > 40) c1++;
+  log('direct draw front @1x:', c1, '(expect 624)');
+  /* 再按渲染里的缩放尺寸 10.5x20 画一遍 */
+  ctx2.drawImage(parts.legs.front, 60, 20, 10.5, 20);
+  const t2 = ctx2.getImageData(60, 20, 12, 21).data;
+  let c2 = 0;
+  for (let i = 3; i < t2.length; i += 4) if (t2[i] > 40) c2++;
+  log('direct draw front @0.5x:', c2, '(expect ~分 4 之一 = 160)');
+
+  /* 手工复现 blitLeg 的坐标 */
+  const u = (96 * 116 / 192) / 116, dx = -96 * 116 / 192 * 0.464, spH = 96;
+  for (const k in WHALE_LEG) {
+    const R = WHALE_LEG[k];
+    log('  ' + k, 'ox=' + (dx + R.sx * u).toFixed(2), 'oy=' + (-spH + R.sy * u).toFixed(2),
+        'w=' + (R.sw * u).toFixed(2), 'h=' + (R.sh * u).toFixed(2));
+  }
+  ctx2.clearRect(0, 0, 400, 300);
+  ctx2.save();
+  ctx2.translate(200, 250);
+  for (const k in WHALE_LEG) {
+    const R = WHALE_LEG[k];
+    const ox = dx + R.sx * u, oy = -spH + R.sy * u;
+    ctx2.drawImage(parts.legs[k], 0, 0, parts.legs[k].width, parts.legs[k].height,
+                   ox, oy, R.sw * u, R.sh * u);
+  }
+  ctx2.restore();
+  { let n = 0, lo = -1, hi = -1;
+    const d = ctx2.getImageData(0, 0, 400, 300).data;
+    for (let yy = 0; yy < 300; yy++) for (let xx = 0; xx < 400; xx++) {
+      if (d[(yy * 400 + xx) * 4 + 3] > 40) { n++; if (lo < 0 || yy < lo) lo = yy; if (yy > hi) hi = yy; }
+    }
+    log('manual legs only: px=' + n + ' yRange=' + lo + '..' + hi);
+
+  const a2 = { x: 200, y: 250, h: 58, aim: 0, vx: 0, anim: 0, onGround: true, crouch: 0 };
+  log('game.time =', game.time);
+  const gg = whaleGait(a2, game.time, 0);
+  log('gait =', JSON.stringify(gg));
+  }
+  log('DONE');
+});
+</script>
+</body>
+</html>

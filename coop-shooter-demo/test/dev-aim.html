@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev aim - 准星绑定验收</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#14181e; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#20262e; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+/* 准星绑定验收页：平底、1× 真实尺寸画，浏览器整体放大截图就能看清
+   「枪的握把是不是咬在拳头里」「枪管是不是沿着准星那条线」。
+
+   ?v=grid  六个俯仰角并排（默认）
+   ?v=crouch 蹲下 + 三个俯仰角（看压缩后枪与手的联动）
+   ?v=gait  腿部动作定帧对比：站立两个相位 / 跑动两个相位 / 空中 / 蹲下
+   叠加物：
+     · 准星射线（青色虚线）—— 从手心沿俯仰角射出，枪管应当压在它上面
+     · 手心十字（黄）—— 枪的握把锚点
+     · 脚底竖线（灰）—— 脚底中心，检查有没有横向漂移
+*/
+const q = new URLSearchParams(location.search);
+const VIEW = q.get('v') || 'grid';
+
+startStage(1);
+aiPanelOpen = false;
+game.wave = 2; game.waveActive = false; game.spawnQueue = [];
+game.waveDelay = 999; game.state = 'playing';
+game.msg = ''; game.msgTimer = 0;
+game.slowmo = 0; game.screenFlash = 0; game.bossIntro = null;
+enemies.length = 0; pickups.length = 0; decals.length = 0; texts.length = 0;
+buddy.bubbleTimer = 0; buddy.bubble = '';
+player.downed = false; player.dead = false; player.hp = player.maxHp;
+buddy.downed = false; buddy.dead = false; buddy.hp = buddy.maxHp;
+
+/* 把世界的所有东西清掉，只留我们要画的人 */
+bullets.length = 0; particles.length = 0; texts.length = 0;
+decals.length = 0; grenades.length = 0; pickups.length = 0;
+casings.length = 0; fires.length = 0;
+player.x = -9000; buddy.x = -9000;
+camera.x = 0; camera.y = 0;
+
+const AIMS = VIEW === 'crouch'
+  ? [-1.1, -0.3, 0.5]
+  : VIEW === 'one'
+    ? [Number(q.get('a') || -0.6)]
+    : [-1.35, -0.75, -0.28, 0, 0.45, 0.95];
+
+/* ?v=one&a=-0.6&z=4 ：单人 4 倍放大，CSS 放大不改绘制，看的就是玩家真正看到的像素 */
+const Z = Number(q.get('z') || 1);
+if (Z > 1) {
+  cvs.style.transformOrigin = '660px 505px';
+  cvs.style.transform = 'scale(' + Z + ')';
+  cvs.style.imageRendering = 'auto';
+}
+
+/* ?nogun=1 ：把枪的绘制整个摘掉，和正常版做像素差分，
+   就能量出「枪到底占了哪块像素」—— 靠眼睛在缩略图上猜不出来。 */
+if (q.get('nogun')) whaleGunProp = function () {};
+
+const ROW = VIEW === 'crouch' ? 1 : 2;
+const POSES = [];
+const GY = [340, 690];
+/* ============================================================
+   ?v=gait ：腿部动作定帧表
+   ------------------------------------------------------------
+   每条腿的姿态由「时间相位」决定，同一张截图里要看到不同的相位，
+   就不能靠真实时钟 —— 直接给每个姿势指定一个 game.time，
+   画它之前临时改掉，画完还回来。这样截图是确定性的，可反复对比。
+   ============================================================ */
+const GAIT = VIEW === 'gait' ? [
+  /* 站立时相位是 t*1.9，所以「半个周期」要取 π/1.9、四分之一取 (π/2)/1.9。
+     一开始写成 +π 和 anim=0，两处都正好落在 sin=0 上，六张图看起来一模一样 —— 白测。 */
+  { label: '站·中立',   gt: 0,                vx: 0,  anim: 0,        onGround: true,  crouch: 0 },
+  { label: '站·抬前腿', gt: Math.PI / 2 / 1.9, vx: 0, anim: 0,        onGround: true,  crouch: 0 },
+  { label: '站·抬后腿', gt: Math.PI * 1.5 / 1.9, vx: 0, anim: 0,      onGround: true,  crouch: 0 },
+  { label: '跑·相位A',  gt: 0, vx: 70, anim: Math.PI / 2,  onGround: true,  crouch: 0 },
+  { label: '跑·相位B',  gt: 0, vx: 70, anim: -Math.PI / 2, onGround: true,  crouch: 0 },
+  { label: '空中',      gt: 0, vx: 70, anim: 0,            onGround: false, crouch: 0 },
+  { label: '蹲下',      gt: 0, vx: 0,  anim: 0,            onGround: true,  crouch: 1 }
+] : null;
+if (GAIT) {
+  const per = 4, n = GAIT.length;
+  GAIT.forEach((g, i) => {
+    const row = i < per ? 0 : 1, col = i % per;
+    POSES.push({
+      x: 1280 / (per + 1) * (col + 1), y: GY[row], h: 58, baseH: 58,
+      aim: -0.3, vx: g.vx, vy: 0, anim: g.anim, crouch: g.crouch,
+      landSquash: 0, invuln: 0, dashTime: 0, flash: 0, muzzle: 0,
+      onGround: g.onGround, downed: false, dead: false, airJumpT: 0,
+      hp: buddy.maxHp, maxHp: buddy.maxHp, _gt: g.gt, _lbl: g.label
+    });
+  });
+}
+AIMS.forEach((av, i) => {
+  if (GAIT) return;
+  if (VIEW === 'one') {
+    POSES.push({
+      x: 640, y: 540, h: 58, baseH: 58, aim: av, vx: 0, vy: 0, anim: 0,
+      crouch: Number(q.get('c') || 0), landSquash: 0, invuln: 0,
+      dashTime: 0, flash: Number(q.get('f') || 0), muzzle: Number(q.get('m') || 0),
+      onGround: true, downed: false, dead: false, airJumpT: 0,
+      hp: buddy.maxHp, maxHp: buddy.maxHp
+    });
+    return;
+  }
+  const perRow = Math.ceil(AIMS.length / ROW);
+  const row = ROW === 1 ? 0 : (i < perRow ? 0 : 1);
+  const col = ROW === 1 ? i : (i % perRow);
+  const n = ROW === 1 ? AIMS.length : perRow;
+  const x = 1280 / (n + 1) * (col + 1);
+  const y = ROW === 1 ? 700 : GY[row];
+  POSES.push({
+    x: x, y: y, h: 58, baseH: 58, aim: av, vx: 0, vy: 0, anim: 0,
+    crouch: VIEW === 'crouch' ? 1 : 0, landSquash: 0, invuln: 0,
+    dashTime: 0, flash: 0, muzzle: 0, onGround: true, downed: false,
+    dead: false, airJumpT: 0, hp: buddy.maxHp, maxHp: buddy.maxHp
+  });
+});
+
+/* 只画人，不画关卡 */
+const ORIG_RENDER = render;
+render = function () {
+  /* live 模式要看真关卡，交还原来的渲染 */
+  if (VIEW === 'live') { ORIG_RENDER(); return; }
+  const W = cvs.width, H = cvs.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#20262e';
+  ctx.fillRect(0, 0, W, H);
+  /* 地面刻度线 */
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 32) {
+    ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
+  }
+
+  for (const a of POSES) {
+    const sx = a.x - camera.x, sy = a.y;
+    const _tKeep = game.time;
+    if (a._gt !== undefined) game.time = a._gt;
+
+    /* 参考线先画（在人的下面） */
+    const lean = whaleLean(a);
+    const cq = a.crouch || 0;
+    const hx0 = whaleHandX(WHALE_FOOT_HOLD);
+    const hy0 = whaleRowY(WHALE_HAND_ROW_HOLD, cq);
+    /* 手心跟着整身倾身一起转（和渲染里一致） */
+    const hx = hx0 * Math.cos(lean) - hy0 * Math.sin(lean);
+    const hy = hx0 * Math.sin(lean) + hy0 * Math.cos(lean);
+    const pitch = whalePitch(a);
+
+    /* 脚底中心 */
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.beginPath(); ctx.moveTo(sx + 0.5, sy - 8); ctx.lineTo(sx + 0.5, sy + 10); ctx.stroke();
+
+    /* 准星射线：从「枪膛轴线」射出去（不是从手心）——
+       枪的膛线在握把上方 5 单位处，缩放后就是 5*WHALE_GUN_K 像素。
+       射线压着枪管才算枪真的跟着准星走。 */
+    const boreOff = 5 * WHALE_GUN_K;
+    const bx = sx + hx + Math.sin(pitch) * boreOff;
+    const by = sy + hy - Math.cos(pitch) * boreOff;
+    ctx.strokeStyle = 'rgba(90,220,255,0.55)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + Math.cos(pitch) * 120, by + Math.sin(pitch) * 120);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    /* 手心十字 */
+    ctx.strokeStyle = '#ffd24a';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(sx + hx - 5, sy + hy); ctx.lineTo(sx + hx + 5, sy + hy);
+    ctx.moveTo(sx + hx, sy + hy - 5); ctx.lineTo(sx + hx, sy + hy + 5);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    /* ?plate=1 连名牌/血条一起画（isBuddy=true），用来验收名牌锚点 */
+    drawWhaleGirl(a, q.get('plate') === '1');
+    if (a._gt !== undefined) game.time = _tKeep;   /* 定帧用完就还回去 */
+
+    const deg = Math.round(pitch * 180 / Math.PI);
+    ctx.fillStyle = '#9fd8ff';
+    ctx.font = 'bold 14px "Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'center';
+    const cap = a._lbl ? a._lbl
+      : (deg < -3 ? '抬头 ' + (-deg) + '°' : deg > 3 ? '低头 ' + deg + '°' : '平射')
+        + (cq > 0.5 ? ' · 蹲' : '');
+    ctx.fillText(cap, sx, sy - 108);
+  }
+  ctx.textAlign = 'left';
+};
+
+update = () => {};
+
+/* ============================================================
+   ?v=live&s=3 ：把「准星绑定」放回真实关卡里看。
+   参考线验的是几何关系，这张验的是观感 —— 夜景的地面反光、
+   灯笼暖色、怪物剪影一压上来，深海军蓝的她端着这把枪会不会糊掉，
+   只有放进真关卡才知道。所以这一支**不覆盖 render**，让游戏自己画。
+   ============================================================ */
+if (VIEW === 'live') {
+  const st = Number(q.get('s') || 3);
+  startStage(st);
+  game.waveActive = false; game.spawnQueue = []; game.waveDelay = 999;
+  game.state = 'playing'; game.msg = ''; game.msgTimer = 0;
+  game.bossIntro = null;
+  /* 别自己瞎设 y —— 这里的 y 是世界坐标，地面在 500 上下，
+     之前按「屏幕上方」写 -40，人直接被放到画面外面去了。
+     直接沿用 startStage 摆好的出生点，把她往右挪一点进镜头。 */
+  player.y = player.y || 0;
+  /* 往左让开右下角那块「大肥鱼 AI」面板，不然枪正好压在面板下面拍不出来 */
+  player.x -= 200;
+  buddy.x = player.x + 96; buddy.y = player.y;
+  buddy.aim = Number(q.get('a') || 0);
+  buddy.invuln = 9999; player.invuln = 9999;
+  buddy.hp = buddy.maxHp = 9999; player.hp = player.maxHp = 9999;
+  /* 让镜头稳稳停在她身上：game 每帧追 player，把她摆好后就冻结镜头。
+     注意别去挪玩家 —— 相机每帧跟着 player 走，挪他等于没挪。
+     要改的是「玩家落在屏幕哪个比例处」，0.30 才能把她从右下角那块面板下面拉出来。 */
+  const lockCam = () => {
+    camera.x = player.x - cvs.width * 0.30;
+    buddy.aim = Number(q.get('a') || 0);
+  };
+  const _upd = update;
+  update = (dt) => { _upd && _upd(dt); lockCam(); };
+}
+</script>
+</body>
+</html>

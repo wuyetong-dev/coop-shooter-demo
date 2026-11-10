@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>trace draw</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:Consolas,monospace; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+  #log { position:fixed; left:6px; top:6px; width:1240px; height:700px; overflow:hidden;
+    background:rgba(0,0,0,.92); border:1px solid #4a6a8a; border-radius:4px;
+    font-size:12px; line-height:1.5; color:#8fe3a0; white-space:pre; padding:8px; z-index:9; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+<div id="log"></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+/* 只干一件事：找出「画在坑口那个位置、又高又窄」的东西是谁画的。
+   坑 @1544~1676，镜头 1085 → 世界屏幕 x 约 509~587。 */
+const q = new URLSearchParams(location.search);
+const TX = Number(q.get('x') || 505);
+const TW = Number(q.get('w') || 46);
+const TH = Number(q.get('h') || 90);
+const logEl = document.getElementById('log');
+
+const out = [];
+let err = '';
+try {
+  startStage(1);
+  aiPanelOpen = false;
+  game.wave = 2; game.waveActive = false; game.spawnQueue = [];
+  enemies.length = 0; game.state = 'playing';
+  buddy.bubbleTimer = 0; buddy.bubble = '';
+  game.msg = ''; game.msgTimer = 0;
+  for (const t of texts) t.life = 0;
+  update = () => {};
+  camera.x = 1085;
+  camera.shake = 0;
+
+  const inX = v => v > TX - 6 && v < TX + TW;
+  const stackOf = () => (new Error().stack || '').split('\n').slice(3, 5)
+    .map(t => t.trim().replace(/^at\s+/, '')).join('  <<  ');
+
+  let rec = false;
+  let pts = [];
+  const oMove = ctx.moveTo.bind(ctx), oLine = ctx.lineTo.bind(ctx);
+  const oFill = ctx.fill.bind(ctx), oStroke = ctx.stroke.bind(ctx);
+  const oRect = ctx.fillRect.bind(ctx), oSRect = ctx.strokeRect.bind(ctx);
+
+  ctx.moveTo = (x, y) => { pts.push([x, y]); return oMove(x, y); };
+  ctx.lineTo = (x, y) => { pts.push([x, y]); return oLine(x, y); };
+  ctx.fillRect = (x, y, w, h) => {
+    if (rec && inX(x) && w < 60 && h > TH) out.push(`fillRect  x${x.toFixed(0)} y${y.toFixed(0)} w${w.toFixed(0)} h${h.toFixed(0)}   <= ${stackOf()}`);
+    return oRect(x, y, w, h);
+  };
+  ctx.strokeRect = (x, y, w, h) => {
+    if (rec && inX(x) && w < 60 && h > TH) out.push(`strokeRect x${x.toFixed(0)} y${y.toFixed(0)} w${w.toFixed(0)} h${h.toFixed(0)}   <= ${stackOf()}`);
+    return oSRect(x, y, w, h);
+  };
+  const flush = (kind, fn, a) => {
+    if (rec && pts.length) {
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys);
+      const w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+      if (inX(x0) && h > TH && w < 60) out.push(`${kind} 路径 x${x0.toFixed(0)} y${y0.toFixed(0)} w${w.toFixed(0)} h${h.toFixed(0)}   <= ${stackOf()}`);
+    }
+    pts = [];
+    return fn(...a);
+  };
+  ctx.fill = (...a) => flush('fill', oFill, a);
+  ctx.stroke = (...a) => flush('stroke', oStroke, a);
+
+  rec = true;
+  render();
+  rec = false;
+} catch (e) {
+  err = '!! ' + e.message + '\n' + (e.stack || '').split('\n').slice(0, 4).join('\n');
+}
+
+logEl.textContent = `镜头 ${camera.x}｜监视屏幕 x∈[${TX},${TX + TW}] 的高物件\n`
+  + (out.length ? out.slice(0, 12).join('\n') : '（本帧没有命中）') + (err ? '\n' + err : '');
+</script>
+</body>
+</html>

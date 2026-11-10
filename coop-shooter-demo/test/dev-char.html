@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev char - 大肥鱼 / 小克</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+/* 角色外观验收页：?v=buddy|xiaoke|corpse
+   把人挪出画面，再用克隆体在一个画面里并排画出来，最后 update = () => {} 冻住逻辑。 */
+const q = new URLSearchParams(location.search);
+const VIEW = q.get('v') || 'buddy';
+
+startStage(1);
+aiPanelOpen = false;
+game.wave = 2; game.waveActive = false; game.spawnQueue = [];
+game.waveDelay = 999; game.state = 'playing';
+game.msg = ''; game.msgTimer = 0;
+game.slowmo = 0; game.screenFlash = 0; game.bossIntro = null;
+enemies.length = 0; pickups.length = 0; decals.length = 0; texts.length = 0;
+buddy.bubbleTimer = 0; buddy.bubble = '';
+player.downed = false; player.dead = false; player.hp = player.maxHp;
+buddy.downed = false; buddy.dead = false; buddy.hp = buddy.maxHp;
+
+function wipeFx() {
+  bullets.length = 0; particles.length = 0; texts.length = 0;
+  decals.length = 0; grenades.length = 0; pickups.length = 0;
+  casings.length = 0; fires.length = 0;
+}
+wipeFx();
+player.x = -5000; buddy.x = -5000;
+
+/* 只留注记的 HUD */
+const caps = [];
+function cap(text, x, y, color, size) { caps.push({ text, x, y, color, size: size || 13 }); }
+const _hud = drawHUD;
+drawHUD = function () {
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center';
+  for (const c of caps) {
+    ctx.font = 'bold ' + c.size + 'px "Microsoft YaHei",sans-serif';
+    ctx.fillStyle = c.color;
+    ctx.fillText(c.text, c.x, c.y);
+  }
+  ctx.textAlign = 'left';
+};
+drawCrosshair = () => {};
+drawAIPanel = () => {};
+
+/* 克隆一个队友，摆成指定姿态 */
+function pose(kind, x, extra) {
+  const c = Object.assign({}, buddy, {
+    x: x, y: world.groundY, onGround: true, aim: 0, vx: 0, vy: 0,
+    crouch: 0, landSquash: 0, invuln: 0, dashTime: 0, flash: 0, muzzle: 0,
+    anim: 0, downed: false, dead: false, airJumpT: 0, hp: buddy.maxHp
+  });
+  return Object.assign(c, extra || {});
+}
+
+const POSES = [];
+
+if (VIEW === 'buddy') {
+  camera.x = 250;
+  POSES.push(pose('idle', 330));
+  POSES.push(pose('fire', 520, { muzzle: 0.6, aim: -0.12 }));
+  POSES.push(pose('jump', 710, {
+    y: world.groundY - 130, onGround: false,
+    airJumpT: AIRJUMP_FLIP * 0.55, flipDir: 1, aim: -0.5, vy: -260
+  }));
+  POSES.push(pose('crouch', 900, { crouch: 1, aim: 0.05 }));
+  POSES.push(pose('down', 1090, { downed: true, downedAt: game.time - 1.4 }));
+  camera.y = 0;
+  const gw = world.groundY;
+  cap('待机', 330, 300, '#9fd8ff');
+  cap('开火（得意）', 520, 300, '#9fd8ff');
+  cap('二段跳空翻', 710, 300, '#9fd8ff');
+  cap('蹲下', 900, 300, '#9fd8ff');
+  cap('倒地待救', 1090, 300, '#9fd8ff');
+} else if (VIEW === 'aim') {
+  /* 准星俯仰验收：六个角度并排，看「枪 / 手 / 身子」是不是一起跟着走 */
+  camera.x = 240;
+  const AIMS = [-1.35, -0.70, -0.22, 0, 0.42, 0.95];
+  const XS = [180, 360, 545, 720, 900, 1085];
+  AIMS.forEach((av, i) => {
+    POSES.push(pose('aim', XS[i], { aim: av }));
+    const deg = Math.round(Math.atan2(Math.sin(av), Math.abs(Math.cos(av))) * 180 / Math.PI);
+    const label = deg < -4 ? ('抬头 ' + (-deg) + '°') : (deg > 4 ? ('低头 ' + deg + '°') : '平射');
+    cap(label, XS[i], 300, '#9fd8ff');
+  });
+} else if (VIEW === 'xiaoke') {
+  camera.x = 420;
+  POSES.push({ kind: 'xiaoke', x: 600, y: world.groundY, baseH: 100, h: 100,
+    aim: 0, anim: 0, vx: 0, muzzle: 0, flash: 0, slamFx: 0, dead: false, look: 'xiaoke' });
+  cap('小克 · 待机', 600, 300, '#ffb08c');
+  cap('深蓝 → 象牙白瓷 + 珊瑚橙星芒', 600, 322, '#c9c4b6', 12);
+} else if (VIEW === 'hero') {
+  /* 主角（位图战士）验收：一屏摆九个姿态，真实像素不放大 */
+  camera.x = 60;
+  camera.y = 0;
+  const hp = (extra) => Object.assign({}, player, {
+    look: 'hero', x: 0, y: world.groundY, onGround: true, aim: 0,
+    vx: 0, vy: 0, crouch: 0, landSquash: 0, invuln: 0, dashTime: 0,
+    flash: 0, muzzle: 0, anim: 0, downed: false, dead: false,
+    airJumpT: 0, plat: null, hp: player.maxHp
+  }, extra || {});
+  const XS = [130, 258, 386, 514, 642, 770, 898, 1026, 1154];
+  const CASES = [
+    ['待机', {}],
+    ['跑动', { vx: 230, anim: 1.2 }],
+    ['蹲下', { crouch: 1, aim: 0.04 }],
+    ['平射', { aim: 0.02, muzzle: 0.5 }],
+    ['抬头', { aim: -0.75 }],
+    ['低头', { aim: 0.55 }],
+    ['空翻', { y: world.groundY - 130, onGround: false, airJumpT: AIRJUMP_FLIP * 0.55, flipDir: 1, aim: -0.5, vy: -260 }],
+    ['朝左', { aim: Math.PI - 0.02 }],
+    ['受击', { flash: 1, aim: 0.1 }]
+  ];
+  CASES.forEach((c, i) => {
+    POSES.push(hp(Object.assign({ x: XS[i] }, c[1])));
+    cap(c[0], XS[i], 272, '#9fd8ff');
+  });
+} else if (VIEW === 'corpse') {
+  camera.x = 250;
+  cap('0.18s 屈膝', 330, 300, '#9fd8ff');
+  cap('0.42s 歪倒', 560, 300, '#9fd8ff');
+  cap('1.20s 躺稳', 800, 300, '#9fd8ff');
+}
+
+const _fx = drawEffects;
+drawEffects = function () {
+  _fx.apply(this, arguments);
+  for (const p of POSES) {
+    if (p.kind === 'xiaoke') drawXiaoke(p);
+    else drawSoldier(p, false);
+  }
+  if (VIEW === 'corpse') {
+    const ts = [0.18, 0.42, 1.20];
+    const xs = [330, 560, 800];
+    for (let i = 0; i < 3; i++) {
+      drawWhaleCorpse({ x: xs[i], y: world.groundY, h: 58, dir: 1 },
+        i === 0 ? 0.16 : (i === 1 ? 1.34 : 1.46),
+        i === 0 ? 3 : 12.5, 1);
+    }
+  }
+};
+
+update = () => {};
+</script>
+</body>
+</html>

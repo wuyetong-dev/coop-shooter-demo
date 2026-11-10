@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>双人闯关 Demo · Co-op Run &amp; Gun</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%;
+    background:#0b0f14;
+    overflow:hidden;
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  }
+  #wrap {
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  canvas {
+    display:block;
+    background:#101820;
+    image-rendering:auto;
+    cursor: crosshair;
+    box-shadow:0 0 60px rgba(0,0,0,.8);
+  }
+  #hint {
+    position:absolute; bottom:8px; left:0; right:0;
+    text-align:center; color:#4a5a6a; font-size:12px;
+    pointer-events:none; user-select:none;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+</div>
+<div id="hint">点击画面开始 · 全屏体验更佳</div>
+
+<script src="js/util.js"></script>
+<script src="js/world.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/game.js"></script>
+<script src="js/render.js"></script>
+<script src="js/chars.js"></script>
+<script src="js/render2.js"></script>
+<script src="js/meta.js"></script>
+<script src="js/hud.js"></script>
+</body>
+</html>

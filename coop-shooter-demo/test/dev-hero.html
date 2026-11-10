@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev hero - 位图战士 像素量测</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#dfe6ec; overflow:hidden;
+    font-family:"Microsoft YaHei",sans-serif; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="720"></canvas>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+window.onerror = (m, s, l, c) => {
+  document.title = 'ERR ' + m + ' @' + l + ':' + c;
+  const p = document.createElement('pre');
+  p.id = 'err';
+  p.textContent = 'ERR ' + m + ' @' + l + ':' + c;
+  document.body.appendChild(p);
+};
+/* 主角位图验收页：纯浅色底 + 一条地面线，只画 drawHero。
+   ?v=cal  四个平射姿势，用于量包围盒（脚底锚点 / 身高 / 宽度）
+   ?v=pose 九个姿态并排，肉眼看姿态 */
+startStage(1);
+aiPanelOpen = false;
+update = () => {};
+
+game.state = 'playing'; game.msg = ''; game.msgTimer = 0;
+enemies.length = 0; pickups.length = 0; decals.length = 0; texts.length = 0;
+gameteStub();
+
+function gameteStub() {
+  bullets.length = 0; particles.length = 0; texts.length = 0; grenades.length = 0;
+  casings.length = 0; fires.length = 0; pickups.length = 0; decals.length = 0;
+}
+
+const q = new URLSearchParams(location.search);
+const VIEW = q.get('v') || 'cal';
+
+const GY = 560;              /* 地面线（屏幕 y） */
+camera.x = 0;
+camera.y = 0;
+
+player.x = -9000; buddy.x = -9000;
+
+const poses = [];
+function addHero(x, extra) {
+  poses.push(Object.assign({}, player, {
+    look: 'hero', x: x, y: GY, onGround: true, aim: 0,
+    vx: 0, vy: 0, crouch: 0, landSquash: 0, invuln: 0, dashTime: 0,
+    flash: 0, muzzle: 0, anim: 0, downed: false, dead: false,
+    airJumpT: 0, plat: null, hp: player.maxHp
+  }, extra || {}));
+}
+
+if (VIEW === 'cal') {
+  /* 同一高度平射，四个位置。脚底锚点是否落在 x 上，量得出来 */
+  [200, 440, 680, 920].forEach(x => addHero(x));
+} else if (VIEW === 'down') {
+  /* 倒地三段：膝盖先折 → 上身歪出去 → 躺稳 */
+  [[0.18, 260, '0.18s 屈膝'], [0.42, 560, '0.42s 歪倒'], [1.20, 860, '1.20s 躺稳']].forEach(([t, x, lbl]) => {
+    addHero(x, { downed: true, downedAt: game.time - t, aim: 0 });
+    poses[poses.length - 1]._lbl = lbl;
+  });
+} else if (VIEW === 'flash') {
+  /* 受击红闪对照：闪到底 / 半程 / 没挨打。暗底（照夜战关卡的亮度），
+     因为黑甲在浅底和暗底上吃色的观感完全不同 */
+  [[1.00, 260, 'flash 1.00'], [0.45, 560, 'flash 0.45'], [0.00, 860, '无'],
+   [1.00, 1140, '蹲下 flash']].forEach(([f, x, lbl]) => {
+    addHero(x, { aim: 0.02, flash: f, crouch: lbl.indexOf('蹲') >= 0 ? 1 : 0 });
+    poses[poses.length - 1]._lbl = lbl;
+  });
+} else {
+  const XS = [110, 250, 390, 530, 670, 810, 950, 1090, 1210];
+  const CASES = [
+    ['待机', {}],
+    ['跑动', { vx: 240, anim: 1.1 }],
+    ['蹲下', { crouch: 1 }],
+    ['平射', { aim: 0.02, muzzle: 0.6 }],
+    ['抬头', { aim: -0.8 }],
+    ['低头', { aim: 0.6 }],
+    ['空翻', { y: GY - 110, onGround: false, airJumpT: AIRJUMP_FLIP * 0.4, flipDir: 1, aim: -0.4 }],
+    ['朝左', { aim: Math.PI + 0.05 }],
+    ['受击', { flash: 1 }]
+  ];
+  CASES.forEach((c, i) => { addHero(XS[i], c[1]); poses[poses.length - 1]._lbl = c[0]; });
+}
+
+/* 画在 render 之前，用干净的底，不受关卡背景干扰 */
+const DARK = VIEW === 'flash';
+const BG0 = DARK ? '#1b2430' : '#dfe6ec';
+const BG1 = DARK ? '#131a23' : '#c3ced8';
+const _render = render;
+render = function () {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = BG0;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = BG1;
+  ctx.fillRect(0, GY, W, H - GY);
+
+  ctx.strokeStyle = 'rgba(220,60,60,0.85)';
+  ctx.lineWidth = 1;
+  for (const p of poses) {
+    ctx.beginPath();
+    ctx.moveTo(p.x + 0.5, 120); ctx.lineTo(p.x + 0.5, GY + 40);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(220,60,60,0.45)';
+  ctx.beginPath(); ctx.moveTo(0, GY + 0.5); ctx.lineTo(W, GY + 0.5); ctx.stroke();
+
+  for (const p of poses) drawHero(p, false);
+
+  ctx.fillStyle = '#2a3a48';
+  ctx.font = 'bold 13px "Microsoft YaHei",sans-serif';
+  ctx.textAlign = 'center';
+  for (const p of poses) if (p._lbl) ctx.fillText(p._lbl, p.x, GY + 34);
+  ctx.textAlign = 'left';
+};
+</script>
+</body>
+</html>

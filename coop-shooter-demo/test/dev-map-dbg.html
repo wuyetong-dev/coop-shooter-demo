@@ -1,0 +1,32 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#0b0f14;overflow:hidden}
+canvas{display:block;background:#101820}</style></head><body>
+<canvas id="game" width="1280" height="720"></canvas>
+<script src="../js/util.js"></script><script src="../js/world.js"></script>
+<script src="../js/ai.js"></script><script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script><script src="../js/render2.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  startStage(Number(q.get('s') || 2));
+  game.waveActive = false; game.spawnQueue = []; enemies.length = 0; game.state = 'playing';
+  const pit = world.pits[0], wind = world.winds[0], hz = world.hazards[0];
+  player.x = pit.x - 40; player.y = world.groundY; player.onGround = true;
+  buddy.cmd = 'hold'; buddy.holdX = player.x - 80; buddy.x = player.x - 80; buddy.y = world.groundY; buddy.onGround = true;
+  game.msg = ''; game.msgTimer = 0;
+  /* 品红描出坑、青描出风口、黄描出机关，看渲染层级谁盖谁 */
+  const _dp = drawPits;
+  drawPits = function () {
+    _dp();
+    ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 2;
+    ctx.strokeRect(pit.x - camera.x, world.groundY - 4, pit.w, 60);
+    ctx.strokeStyle = '#00ffff';
+    ctx.strokeRect(wind.x - camera.x, wind.top, wind.w, world.groundY - wind.top);
+    ctx.strokeStyle = '#ffff00';
+    for (const h of world.hazards) ctx.strokeRect(h.x - camera.x, world.groundY - h.h, h.w, h.h);
+  };
+  camera.x = Math.max(0, pit.x + pit.w * 0.5 - VIEW_W * 0.5);
+  update = () => {};
+  camera.x = Math.max(0, pit.x + pit.w * 0.5 - VIEW_W * 0.5);
+</script>
+<script src="../js/hud.js"></script></body></html>

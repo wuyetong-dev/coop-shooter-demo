@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev shot 2 - 平台站位</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script>
+  /* 固定构图：玩家站低台、八哥站高台，检查脚底与平台顶面是否严丝合缝 */
+  startStage(1);
+  aiPanelOpen = false;
+  game.wave = 2;
+  game.waveActive = false;
+  game.spawnQueue = [];
+  enemies.length = 0;
+
+  const low = world.platforms.find(p => p.mat === 'steel');
+  const mid = world.platforms.find(p => p.mat === 'concrete');
+  const high = world.platforms.find(p => p.mat === 'crate');
+
+  player.x = low.x + 120; player.y = low.y; player.onGround = true;
+  buddy.x = high.x + 80; buddy.y = high.y; buddy.onGround = true;
+  buddy.cmd = 'hold'; buddy.holdX = buddy.x; buddy.intent = 'HOLD';
+  camera.x = Math.max(0, player.x - VIEW_W / 2);
+  input.mx = 900; input.my = 300;
+
+  for (let i = 0; i < 30; i++) { update(1 / 60); }
+  player.vx = 0; buddy.vx = 0;
+</script>
+<script src="../js/hud.js"></script>
+</body>
+</html>

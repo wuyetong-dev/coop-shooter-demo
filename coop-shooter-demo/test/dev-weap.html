@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev weapon fx</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  /* 冻结主循环，自己钉帧数 —— 才能在「子弹在半空 / 爆炸刚炸开」那一帧截图 */
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  var q = {}, qr = {};   // q 数值，qr 原始字符串
+  location.search.slice(1).split('&').forEach(function (kv) {
+    if (!kv) return;
+    var p = kv.split('=');
+    qr[p[0]] = (p[1] === undefined) ? '1' : p[1];
+    q[p[0]] = Number(qr[p[0]]);
+  });
+
+  var ST = q.stage || 1;
+  var WI = (q.w || 5) - 1;          // 1..5 对应 M4 / M870 / M249 / AWM / RPG
+  var PX = q.px !== undefined ? q.px : 760;
+
+  startStage(ST);
+  aiPanelOpen = false;
+
+  /* 先让波次推进一会儿，场上才有敌人可打 */
+  for (var i = 0; i < 60 * 4; i++) update(1 / 60);
+
+  game.state = 'playing';
+  player.x = PX; player.y = world.groundY; player.vy = 0;
+  player.onGround = true; player.hp = 1e9; player.h = player.baseH;
+  player.weapon = WI; player.mags[WI] = WEAPONS[WI].mag;
+  player.reloading = 0; player.fireCd = 0; player.triggerHeld = false;
+  player.crouch = 0; player.ads = false;
+
+  /* 把最近的敌人拉到枪口正前方 —— 不然截到的可能是一发打空气 */
+  var tgt = null, bd = 1e9;
+  for (var k = 0; k < enemies.length; k++) {
+    var e = enemies[k];
+    if (e.dead) continue;
+    var d = Math.abs(e.x - PX);
+    if (d < bd) { bd = d; tgt = e; }
+  }
+  if (tgt) { tgt.x = PX + 430; tgt.y = world.groundY; tgt.vy = 0; tgt.hp = 1e9; }
+
+  buddy.x = PX - 96; buddy.y = world.groundY; buddy.vy = 0; buddy.hp = 1e9;
+
+  camera.x = PX - 470;
+
+  /* 鼠标瞄准正前方 430px、离地 34px 的位置（打躯干，方便看命中效果） */
+  var AWX = PX + 430, AWY = world.groundY - 34;
+  input.mx = (AWX - camera.x) * VIEW_ZOOM;
+  input.my = AWY * VIEW_ZOOM + CAM_TY;
+
+  /* ---------------------------------------------------------------
+     按武器挑一个「最有看头」的帧停住：
+       狙击 → 曳光弹飞到一半
+       火箭 → 刚炸开、冲击波环还在
+       其它 → 枪口火焰 + 弹壳那一刻
+     --------------------------------------------------------------- */
+  var STOP = -1;
+  for (var f = 0; f < 240; f++) {
+    input.firing = true;
+    update(1 / 60);
+    if (game.state !== 'playing') game.state = 'playing';
+
+    if (WEAPONS[WI].rocket) {
+      if (particles.some(function (p) { return p.ring; })) { f += 3; for (var z = 0; z < 3; z++) update(1 / 60); STOP = f; break; }
+    } else if (WEAPONS[WI].tracer) {
+      if (bullets.some(function (b) { return b.tracer; })) { STOP = f; break; }
+    } else {
+      if (bullets.length > 0 && f > 4) { STOP = f; break; }
+    }
+  }
+  input.firing = false;
+  if (STOP < 0) STOP = 30;
+
+  /* ---------------------------------------------------------------
+     定点摆拍（?pin=1）：把相机和角色钉死在固定坐标，
+     直接摆一发狙击曳光 + 一发飞行中的火箭，专看渲染效果。
+     --------------------------------------------------------------- */
+  var pinned = false;
+  if (qr.pin) {
+    pinned = true;
+    player.x = PX; player.y = world.groundY; player.vy = 0;
+    player.h = player.baseH; player.crouch = 0;
+    buddy.x = PX - 110; buddy.y = world.groundY; buddy.vy = 0;
+    camera.x = PX - 520;
+    render();                                  // 先画一次，让相机收敛
+    camera.x = PX - 520;
+    bullets.length = 0;
+    particles.length = 0;
+    enemies.forEach(function (e) { e.x = Math.max(e.x, PX + 900); });
+
+    var gy = world.groundY;
+    var ONLY = qr.only || 'both';
+
+    /* ?only=boom：炸一个油桶，看连锁爆炸 + 碎块 */
+    if (ONLY === 'boom') {
+      var barrel = null, bdist = 1e9;
+      for (var bi = 0; bi < world.blocks.length; bi++) {
+        var bk = world.blocks[bi];
+        if (bk.kind !== 'barrel') continue;
+        var dd = Math.abs(bk.x - (PX + 220));
+        if (dd < bdist) { bdist = dd; barrel = bk; }
+      }
+      if (barrel) {
+        player.x = barrel.x - 150; player.y = gy;
+        buddy.x = barrel.x - 260; buddy.y = gy;
+        camera.x = barrel.x - 470;
+        render();
+        camera.x = barrel.x - 470;
+        barrel.hp = 1;
+        hurtCover(barrel, 99);          // 打爆 → explode 连锁
+        for (var bf = 0; bf < Number(qr.bf || 4); bf++) update(1 / 60);
+        
+      }
+      ONLY = 'skip';
+    }
+
+    if (ONLY !== 'rocket' && ONLY !== 'skip') {
+      /* 一发狙击曳光飞到半空 */
+      spawnBullet(PX + 210, gy - 40, 2700, 0, 88, 'player', '#bfe4ff', 3.2, 'player', { tracer: true, pierce: 2 });
+    }
+    if (ONLY !== "tracer" && ONLY !== "skip") {
+      /* 一发火箭在推进中（放在画面中段，避开右侧 HUD） */
+      spawnBullet(PX + 185, gy - 118, 660, 0, 0, 'player', '#ffb066', 4.6, 'player', { rocket: true, blast: 132, blastDmg: 105 });
+    }
+    /* 弹道经过的位置留几颗命中火花，画面才不空 */
+    for (var s = 0; s < 6; s++) {
+      particles.push({
+        x: PX + 300 + s * 24, y: gy - 40 + (s % 3) * 4,
+        vx: rand(-40, 40), vy: rand(-50, 10), life: 0.3, max: 0.3,
+        color: '#ffe0a0', size: rand(1.5, 3), grav: 0
+      });
+    }
+  }
+
+  render();
+  if (tgt) tgt.hp = 1e9;
+
+  /* 放大镜：?zoom=1&zx=&zy=&zw=&zh=&zs= */
+  if (q.zoom) {
+    var ZX = q.zx || 200, ZY = q.zy || 480, ZW = q.zw || 380, ZH = q.zh || 200, ZS = q.zs || 3;
+    var img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    var tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+
+  document.title = 'STOP@' + STOP + ' bullets=' + bullets.length + ' particles=' + particles.length;
+</script>
+</body>
+</html>

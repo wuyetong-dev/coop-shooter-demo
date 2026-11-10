@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev shot</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script>
+  /* 拦截主循环启动前的原地渲染：先手动推进一段战斗，再交给正常 rAF 循环 */
+  startStage(1);
+  aiPanelOpen = true;
+  buddy.style = 0;            // 谨慎型，便于观察走位与躲弹
+  keys.KeyD = true;           // 玩家往前压 2.5 秒，停在中场
+  input.firing = true;
+  input.mx = 900; input.my = 360;
+  for (let i = 0; i < 60 * 14; i++) {
+    if (i === 150) keys.KeyD = false;
+    update(1 / 60);
+    if (game.state !== 'playing') break;
+  }
+  keys.KeyD = false;
+</script>
+<script src="../js/hud.js"></script>
+</body>
+</html>

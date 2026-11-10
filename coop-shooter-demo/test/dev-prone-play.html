@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev prone in play</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/meta.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  /* 真关卡里按 Z 趴下：跑够一秒的更新，看判定/贴地/枪口/准星在实战构图下对不对 */
+  startStage(1);
+  aiPanelOpen = false;
+  game.state = 'playing';
+
+  /* 造两个近处的敌人，让画面里同时有「趴着的我」和「趴着的枪兵」 */
+  enemies.length = 0;
+  const gi = createEnemy('gunner', 760, 1);
+  gi.y = world.groundY; gi.spawnGuard = 0; gi.aim = Math.PI + 0.02;
+  gi.crouch = 0; gi.prone = 1; gi.h = stanceH(gi, 15); gi.hitW = stanceHitW(gi);
+  enemies.push(gi);
+
+  /* 按住 Z + 鼠标朝右，跑 2 秒让它自己躺下去，顺便等大肥鱼伞降落地 */
+  keys['KeyZ'] = true;
+  input.mx = 900; input.my = 430;
+  input.firing = true;
+  for (let i = 0; i < 150; i++) {
+    input.mx = player.x - camera.x + 220;
+    input.my = 430;
+    update(1 / 60);
+  }
+  input.firing = false;
+  player.muzzle = 0.08;
+  /* 把镜头钉死，别让相机插值把玩家推到 HUD 底下 */
+  const q0 = {};
+  location.search.slice(1).split('&').forEach(function (kv) {
+    const p = kv.split('='); q0[p[0]] = kv.split('=')[1];
+  });
+  if (q0.aim !== undefined) { player.aim = Number(q0.aim); player.muzzle = 0; }
+  camera.x = player.x - 520;
+  camera.shake = 0;
+  render();
+
+  if (/zoom/.test(location.search)) {
+    const q = {};
+    location.search.slice(1).split('&').forEach(function (kv) {
+      const p = kv.split('='); q[p[0]] = Number(p[1]);
+    });
+    const ZX = q.zx || 300, ZY = q.zy || 480, ZW = q.zw || 420, ZH = q.zh || 190, ZS = q.zs || 3;
+    const img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    const tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+</script>
+</body>
+</html>

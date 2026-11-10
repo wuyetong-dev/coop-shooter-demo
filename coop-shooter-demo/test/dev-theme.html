@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev theme</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  /* 冻结主循环，钉死帧数，方便对比三关布局 */
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  var q = {};
+  location.search.slice(1).split('&').forEach(function (kv) {
+    var p = kv.split('=');
+    q[p[0]] = (p[1] === undefined) ? 1 : Number(p[1]);
+  });
+  var ST = q.stage || 1;
+  var CAM = q.cam !== undefined ? q.cam : 700;
+
+  startStage(ST);
+  aiPanelOpen = false;
+
+  /* 跑一小段，让敌兵各就位、波次条推进 */
+  for (var i = 0; i < 60 * 4; i++) update(1 / 60);
+
+  game.state = 'playing';
+  player.x = CAM + 120; player.y = world.groundY; player.vy = 0;
+  camera.x = CAM;
+
+  render();
+
+  /* 放大镜：检查砖墙 / 铁丝网这类小物件 */
+  if (q.zoom) {
+    var ZX = q.zx || 200, ZY = q.zy || 480, ZW = q.zw || 380, ZH = q.zh || 200, ZS = q.zs || 3;
+    var img = ctx.getImageData(ZX, ZY, ZW, ZH);
+    var tmp = document.createElement('canvas');
+    tmp.width = ZW; tmp.height = ZH;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.drawImage(tmp, 0, 0, ZW, ZH, 0, 0, ZW * ZS, ZH * ZS);
+  }
+</script>
+</body>
+</html>

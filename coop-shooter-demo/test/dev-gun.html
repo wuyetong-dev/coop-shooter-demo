@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev gun</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script>
+  window.requestAnimationFrame = function () { return 0; };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/meta.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+  window.onerror = function (m, f, l) {
+    var c = document.getElementById('game').getContext('2d');
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.fillStyle = '#400'; c.fillRect(0, 0, 1280, 60);
+    c.fillStyle = '#fff'; c.font = '15px monospace'; c.textAlign = 'left';
+    c.fillText('ERROR: ' + m + '  @' + f + ':' + l, 16, 36);
+  };
+
+  /* 枪口角度专测：同一个人、三种仰俯角并排，每格一根水平参考线。
+     目的是确认「趴下之后枪还是跟着准星走」，而不是被身体带着戳天/戳地。
+     用真 player 对象反复改 x / aim 画三遍，避免假实体缺字段。 */
+  startStage(3);
+  aiPanelOpen = false;
+  input.firing = false;
+  camera.x = 0; camera.y = 0; camera.shake = 0;
+  enemies.length = 0; bullets.length = 0; particles.length = 0;
+
+  const GY = world.groundY;
+  const AIMS = [-0.45, 0, 0.45];
+  const XS = [205, 525, 845];   /* × VIEW_ZOOM(1.22) → 屏 250 / 640 / 1030 */
+
+  player.prone = 1; player.crouch = 0; player.vx = 0; player.vy = 0;
+  player.onGround = true; player.muzzle = 0; player.flash = 0;
+  player.dashTime = 0; player.ads = false;
+  player.h = stanceH(player, 17); player.hitW = stanceHitW(player);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#141c24'; ctx.fillRect(0, 0, 1280, 720);
+
+  const toSY = (wy) => wy * VIEW_ZOOM + CAM_TY;
+  const gsy = toSY(GY);
+  ctx.fillStyle = '#0c1218'; ctx.fillRect(0, gsy, 1280, 720 - gsy);
+  ctx.strokeStyle = 'rgba(255,209,102,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, gsy + 0.5); ctx.lineTo(1280, gsy + 0.5); ctx.stroke();
+
+  ctx.save();
+  ctx.translate(0, CAM_TY); ctx.scale(VIEW_ZOOM, VIEW_ZOOM);
+
+  /* 先铺参考线（画在人底下，免得压住枪）。趴下时掌根被抬到 h 附近，
+     所以这条线取「趴姿掌根高度」，正好用来判断枪是否水平。 */
+  const handY = GY + heroRowY(HERO_HAND_ROW_HOLD, 0);
+  ctx.lineWidth = 1 / VIEW_ZOOM;
+  ctx.setLineDash([7 / VIEW_ZOOM, 6 / VIEW_ZOOM]);
+  ctx.strokeStyle = 'rgba(120,226,255,0.32)';
+  AIMS.forEach(function (aim, i) {
+    ctx.beginPath(); ctx.moveTo(XS[i] - 110, handY); ctx.lineTo(XS[i] + 130, handY); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  AIMS.forEach(function (aim, i) {
+    player.x = XS[i];
+    player.aim = aim;
+    player.y = GY;
+    drawSoldier(player, false);
+  });
+  ctx.restore();
+
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 14px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.72)';
+  AIMS.forEach(function (aim, i) {
+    ctx.fillText('aim = ' + aim.toFixed(2) + ' rad', XS[i] * VIEW_ZOOM, gsy + 46);
+  });
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.34)';
+  ctx.font = '12px "Microsoft YaHei",sans-serif';
+  ctx.fillText('虚线 = 站立时掌根高度（不是地面）。趴下后枪应仍绕掌根随 aim 抬/压，而不是被身体带歪。', 24, 34);
+</script>
+</body>
+</html>

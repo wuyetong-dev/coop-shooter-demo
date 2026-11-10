@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev fx - 动作 / 尸体 / 准星 / 曳光</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#0b0f14; overflow:hidden;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; }
+  #wrap { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; background:#101820; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+
+<script src="../js/util.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/chars.js"></script>
+<script src="../js/render2.js"></script>
+<script src="../js/hud.js"></script>
+<script>
+/* 定点验收页：?v=flip|flipsheet|corpse|aim|tracer[&k=0.45][&w=0][&d=near|mid|far]
+   思路和 dev-map.html 一样 —— 先把场景摆成要拍的那一帧，再 update = () => {}，
+   只留 render，免得截图期间敌人跑动、粒子散掉、火焰周期转走。
+   这一页必须放在 hud.js 之后：要覆写 drawHUD / drawEffects，得等它先声明完。 */
+const q = new URLSearchParams(location.search);
+const VIEW = q.get('v') || 'flip';
+const K = clamp(Number(q.get('k') || 0.45), 0.02, 0.99);
+const WI = Number(q.get('w') || 0);
+const NEAR = q.get('d') || 'near';
+
+startStage(1);
+aiPanelOpen = false;
+game.wave = 2;
+game.waveActive = false;
+game.spawnQueue = [];
+game.waveDelay = 999;
+game.state = 'playing';
+game.msg = ''; game.msgTimer = 0;
+game.slowmo = 0; game.screenFlash = 0; game.bossIntro = null;
+enemies.length = 0; pickups.length = 0; decals.length = 0; texts.length = 0;
+buddy.bubbleTimer = 0; buddy.bubble = '';
+player.downed = false; player.dead = false; player.hp = player.maxHp;
+buddy.downed = false; buddy.dead = false; buddy.hp = buddy.maxHp;
+
+function wipeFx() {
+  bullets.length = 0; particles.length = 0; texts.length = 0;
+  decals.length = 0; grenades.length = 0; pickups.length = 0;
+  casings.length = 0; fires.length = 0;
+}
+function stand(el, x) {
+  el.x = x; el.y = world.groundY; el.onGround = true; el.plat = null;
+  el.vx = 0; el.vy = 0; el.crouch = 0; el.landSquash = 0; el.invuln = 0;
+  el.dashTime = 0; el.flash = 0; el.lastHurt = -99; el.aim = 0;
+  el.downed = false; el.dead = false; el.airJumps = 1; el.anim = 0;
+}
+function camOn(cx) {
+  camera.x = clamp(cx - VIEW_W * 0.5, 0, Math.max(0, world.w - VIEW_W));
+  camera.shake = 0;
+}
+
+/* 屏幕空间注记：覆写 drawHUD 而不是塞 HTML —— 位置直接跟着画面走 */
+const caps = [];
+function cap(text, x, y, color, size) {
+  caps.push({ text: text, x: x, y: y, color: color || '#eaf2f8', size: size || 15 });
+}
+const _hud = drawHUD;
+drawHUD = function () {
+  /* 验收页不画血条 / 波次 / AI 面板：这些东西会糊在要看的细节上。
+     只留注记，画面里剩下的每一个像素都是这一轮要检查的东西。 */
+  ctx.globalAlpha = 1;
+  for (const c of caps) {
+    ctx.font = 'bold ' + c.size + 'px "Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(0,0,0,0.70)';
+    ctx.fillText(c.text, c.x + 1, c.y + 1);
+    ctx.fillStyle = c.color;
+    ctx.fillText(c.text, c.x, c.y);
+  }
+};
+
+/* ---------------- 1. 二段跳空翻 ---------------- */
+if (VIEW !== 'aim') drawCrosshair = () => {};   /* 别的画面不需要准星挡住人 */
+drawAIPanel = () => {};                          /* AI 状态面板会压住左上角的注记 */
+
+if (VIEW === 'flip' || VIEW === 'flipsheet') {
+  wipeFx();
+  player.aim = 0; player.facing = 1; player.crouch = 0; player.landSquash = 0;
+  player.invuln = 0; player.airJumps = 1;
+  player.x = 600; player.y = world.groundY - 250;
+  player.onGround = false; player.vy = -260; player.vx = 0; player.plat = null;
+  stand(buddy, 240);
+  buddy.cmd = 'hold'; buddy.holdX = buddy.x;
+
+  doAirJump(player);
+  for (let i = 0; i < 4; i++) update(1 / 60);   /* 让气浪环张到最大 */
+  /* 渲染只看 airJumpT：需要定格在哪一帧，就直接把它拨到那一格 */
+  player.airJumpT = AIRJUMP_FLIP * (1 - K);
+
+  if (VIEW === 'flip') {
+    camOn(player.x);
+    cap('二段跳空翻 · 进度 ' + K.toFixed(2) + ' · ' +
+        (K < 0.3 ? '起转' : K < 0.62 ? '团身最深' : '展开收尾'), 28, 40, '#ffd166', 18);
+    cap('转体一圈 0.42s（smoothstep）· 绕身体中段转 · 中段收腿团身', 28, 64, '#cfdbe4', 14);
+  } else {
+    /* 三联分解图：把三个进度做成三个「克隆兵」，用同一个 drawSoldier 画，
+       这样证明确实是同一套绘制代码在跑，不是另画一套示意图。 */
+    player.x = -3000; player.y = world.groundY;
+    buddy.x = -3400;
+    /* 分解图上不要有气浪环和尘土：它们会盖在人物身上，看不清腿 */
+    wipeFx();
+    const POSES = [0.12, 0.45, 0.80];
+    const NAMES = ['起转 · 蹬地收腿', '团身最深 · 转体半圈', '展开 · 脚回正下方'];
+    const clones = POSES.map(function (k, i) {
+      return Object.assign({}, player, {
+        x: 380 + i * 250, y: world.groundY - 215, onGround: false,
+        airJumpT: AIRJUMP_FLIP * (1 - k), flipDir: 1, aim: 0, vx: 0, vy: 0,
+        landSquash: 0, crouch: 0, invuln: 0, dashTime: 0, flash: 0,
+        downed: false, dead: false, anim: 0
+      });
+    });
+    const _fx = drawEffects;
+    drawEffects = function () {
+      _fx();
+      for (const c of clones) drawSoldier(c, false);
+    };
+    camOn(640);
+    cap('二段跳空翻 · 三段分解（同一套 drawSoldier 绘制）', 28, 40, '#ffd166', 18);
+    for (let i = 0; i < 3; i++) {
+      const sx = (380 + i * 250 - camera.x) * VIEW_ZOOM;
+      cap(NAMES[i], sx - 92, 432, '#cfdbe4', 13);
+    }
+  }
+}
+
+/* ---------------- 2. 尸体软倒 ---------------- */
+if (VIEW === 'corpse') {
+  wipeFx();
+  stand(player, 300);
+  stand(buddy, 190);
+  buddy.cmd = 'hold'; buddy.holdX = buddy.x;
+
+  const xs = [470, 730, 990];
+  const ts = [0.18, 0.42, 1.20];
+  for (let i = 0; i < 3; i++) {
+    /* 走真实链路：spawnEnemyAt → killEnemy → spawnCorpse，不用手搓假尸体 */
+    spawnEnemyAt('grunt', { x: xs[i], y: world.groundY }, 1);
+    const e = enemies[enemies.length - 1];
+    e.x = xs[i]; e.y = world.groundY; e.onGround = true; e.hp = 0;
+    killEnemy(e);
+  }
+  enemies.length = 0;
+  wipeFx();
+  pickups.length = 0;
+
+  for (let i = 0; i < corpses.length; i++) {
+    corpses[i].x = xs[i];
+    corpses[i].y = world.groundY;
+    corpses[i].landed = true;
+    corpses[i].t = ts[i];
+    corpses[i].life = 5.0;      /* 别在截图时淡出 */
+    corpses[i].dir = 1;
+  }
+  camOn(730);
+
+  cap('死亡软倒 · 同一个 t 计时器推出来的三段', 28, 40, '#ffd166', 18);
+  cap('0.18s 膝盖一软往下沉  →  0.42s 上身歪出去  →  1.20s 落地余震后躺稳', 28, 64, '#cfdbe4', 14);
+  const lbs = ['0.18s 屈膝', '0.42s 歪倒', '1.20s 躺稳'];
+  for (let i = 0; i < 3; i++) {
+    const sx = (xs[i] - camera.x) * VIEW_ZOOM;
+    cap(lbs[i], sx - 40, 690, '#ffb3a7', 13);
+  }
+}
+
+/* ---------------- 3. 准星随距离变大 ---------------- */
+if (VIEW === 'aim') {
+  wipeFx();
+  player.weapon = WI;
+  stand(player, 400);
+  stand(buddy, 300);
+  buddy.cmd = 'hold'; buddy.holdX = buddy.x;
+
+  const wp = WEAPONS[player.weapon];
+  /* 枪口位置要和 drawCrosshair 里算的一致，否则 dist 量出来对不上 */
+  const ox = player.x + Math.cos(player.aim) * 30;
+  const oy = player.y - player.h * 0.62 + Math.sin(player.aim) * 30;
+
+  const dist = NEAR === 'far' ? 760 : NEAR === 'mid' ? 380 : 130;
+  const wx = ox + dist;
+  const wy = oy - 34;
+
+  /* 机位：让准星落在画面右侧 ~1000px 处（近距时镜头贴左边，玩家自然出现在中段） */
+  camera.x = clamp(wx - 820, 0, Math.max(0, world.w - VIEW_W));
+  camera.shake = 0;
+
+  input.mx = (wx - camera.x) * VIEW_ZOOM;
+  input.my = wy * VIEW_ZOOM + CAM_TY;
+
+  const rad = aimRadiusPx(wp, dist, 1 - 0.55 * player.crouch);
+  const drop = aimDropPx(wp, dist, player.aim);
+  cap(wp.name + ' · 距准星 ' + dist + 'px', 28, 40, '#ffd166', 18);
+  cap('圈半径 ' + rad.toFixed(1) + 'px（= tan(' + (wp.spread * 180 / Math.PI).toFixed(2) +
+      '°) × ' + dist + 'px）× 下坠 ' + drop.toFixed(1) + 'px', 28, 64, '#cfdbe4', 14);
+  cap('圈越大越难保证命中 —— 圈的大小就是这把枪在这个距离的散布', 28, 88, '#9fb3c2', 13);
+}
+
+/* ---------------- 4. 曳光粗细 ---------------- */
+if (VIEW === 'tracer') {
+  wipeFx();
+  stand(player, 180);
+  stand(buddy, 110);
+  buddy.cmd = 'hold'; buddy.holdX = buddy.x;
+  camOn(700);
+
+  const rows = [
+    { i: 0, y: 380, n: 1 },
+    { i: 1, y: 442, n: 5 },
+    { i: 3, y: 504, n: 1 },
+    { i: 4, y: 566, n: 1 }
+  ];
+  for (const r of rows) {
+    const wp = WEAPONS[r.i];
+    for (let k = 0; k < r.n; k++) {
+      /* 第 10 个参数才是 opts —— 传错位置弹道字段会静默全丢 */
+      spawnBullet(430, r.y + (r.n > 1 ? (k - (r.n - 1) / 2) * 3.4 : 0),
+        wp.speed, 0, 40, 'player', '#ffd88a', 3.2, 'player', wp);
+    }
+  }
+  for (let i = 0; i < 12; i++) update(1 / 60);
+
+  cap('曳光粗细 · 每把枪自己的视觉半宽 bw（判定半径仍是 r）', 28, 40, '#ffd166', 18);
+  cap('同距离、同起点：狙击 300px 光带 / 火箭 4.2 半宽的尾焰 / 步枪 1.5 的细线', 28, 64, '#cfdbe4', 14);
+  for (const r of rows) {
+    const wp = WEAPONS[r.i];
+    const sy = r.y * VIEW_ZOOM + CAM_TY;
+    cap(wp.name + '  bw=' + wp.bw + '  speed=' + wp.speed +
+        '  grav=' + wp.grav + '  drag=' + wp.drag, 28, sy + 5, '#9fd7b0', 12);
+  }
+}
+
+player.vx = 0; buddy.vx = 0;
+game.msg = ''; game.msgTimer = 0;
+buddy.bubbleTimer = 0; buddy.bubble = '';
+for (const t of texts) t.life = 0;
+
+/* 冻住逻辑，只留渲染 */
+update = () => {};
+</script>
+</body>
+</html>
